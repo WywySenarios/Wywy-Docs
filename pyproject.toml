@@ -1,0 +1,23 @@
+[project]
+name = "wywy-docs"
+version = "0.1.0"
+description = "Wywy-Docs RAG — MCP documentation search server"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp",
+    "pyyaml",
+    "uvicorn",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["wywy_docs*"]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta:__legacy__"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]

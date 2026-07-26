@@ -1,0 +1,17 @@
+[Unit]
+Description=Wywy-Docs MCP Server
+Documentation=https://github.com/WywySenarios/Wywy-Docs
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/wywy
+Environment=WYWY_ROOT=%h/Documents/wywy
+ExecStart=%h/Documents/wywy/.venv/bin/python -m wywy_docs.server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
