@@ -4,10 +4,10 @@
 #   docker build -t wywy-docs:test .
 #
 # Run tests:
-#   docker run --rm wywy-docs:test
+#   docker run --rm --network none wywy-docs:test
 #
 # Run with Wywy-Website-Control docs (needed for repo-structure tests):
-#   docker run --rm                    \
+#   docker run --rm --network none       \
 #     -v /etc/Wywy-Website-Control/docs/:/etc/Wywy-Website-Control/docs/:ro \
 #     -v /etc/Wywy-Website-Control/internal/:/etc/Wywy-Website-Control/internal/:ro \
 #     wywy-docs:test

@@ -8,4 +8,4 @@ docker build -t wywy-docs:test .
 
 echo ""
 echo "==> Running tests..."
-docker run --rm wywy-docs:test
+docker run --rm --network none wywy-docs:test
