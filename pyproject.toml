@@ -5,6 +5,7 @@ description = "Wywy-Docs RAG — MCP documentation search server"
 requires-python = ">=3.10"
 dependencies = [
     "mcp",
+    "pydantic>=2.0",
     "pyyaml",
     "uvicorn",
 ]

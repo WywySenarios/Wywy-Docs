@@ -7,9 +7,13 @@ Exposes the FTS5 documentation index as MCP tools (``search_docs``,
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
+import tempfile
+import time
 
+import yaml
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools.tool_manager import ToolError
 from mcp.shared.exceptions import McpError
@@ -24,6 +28,9 @@ from mcp.types import (
 )
 
 from wywy_docs.indexer import build_index, parse_file
+from wywy_docs.models import DocFrontmatter, Section
+
+logger = logging.getLogger(__name__)
 
 # ── Globals ───────────────────────────────────────────────────────────
 
@@ -109,6 +116,133 @@ def get_doc(path: str):
     )
 
 
+@mcp.tool()
+def write_doc(
+    section: Section, path: str, content: str, frontmatter: dict | None = None
+):
+    """Create or update a documentation file.
+
+    Args:
+        section: Section to write to ("docs" or "internal").
+        path: Path relative to the section directory.
+        content: Document content (body text, after frontmatter).
+        frontmatter: Optional YAML frontmatter fields.
+    """
+    # Normalize path: strip leading/trailing slashes
+    path = path.strip("/")
+
+    # Reject path traversal
+    if ".." in path.split("/"):
+        raise ValueError("path traversal ('..') is not allowed")
+
+    # Add .mdx extension if not present
+    if not path.endswith(".mdx"):
+        path = path + ".mdx"
+
+    # Build full path
+    section_dir = os.path.join(_ROOT_DIR, section)
+    abs_path = os.path.join(section_dir, path)
+
+    # Resolve symlinks on both target and allowed prefix, then compare
+    real_abs = os.path.realpath(abs_path)
+    real_prefix = os.path.realpath(section_dir)
+    if not real_abs.startswith(real_prefix + "/") and real_abs != real_prefix:
+        raise ValueError("path escapes the allowed directory via symlink")
+
+    # Check parent directory exists
+    parent = os.path.dirname(abs_path)
+    if not os.path.isdir(parent):
+        raise ValueError("parent directory does not exist")
+
+    # Normalise frontmatter
+    if frontmatter is None:
+        frontmatter = {}
+
+    # Validate user frontmatter before any I/O
+    try:
+        DocFrontmatter(frontmatter)
+    except ValueError as e:
+        raise ValueError(str(e))
+
+    # ── Read existing file for merge ────────────────────────────────
+    existing_fm: dict = {}
+    if os.path.isfile(abs_path):
+        try:
+            parsed = parse_file(abs_path, root=_ROOT_DIR)
+            existing_fm = parsed["frontmatter"]
+        except Exception:
+            pass
+
+    # Filter out reserved fields from existing frontmatter
+    existing_filtered = {
+        k: v for k, v in existing_fm.items() if k not in ("published", "last_updated")
+    }
+
+    # Determine published value
+    if "published" in existing_fm and existing_fm["published"] is not None:
+        pub_val = existing_fm["published"]
+        if isinstance(pub_val, str):
+            published = pub_val
+        elif hasattr(pub_val, "isoformat"):
+            published = pub_val.isoformat()
+        else:
+            published = str(pub_val)
+    else:
+        published = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+
+    # last_updated is always current
+    last_updated = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+
+    # Merge: existing (minus reserved) → user fields → published/last_updated
+    merged_fm = {
+        **existing_filtered,
+        **frontmatter,
+        "published": published,
+        "last_updated": last_updated,
+    }
+
+    # Serialize frontmatter
+    fm_yaml = yaml.safe_dump(
+        merged_fm,
+        default_flow_style=False,
+        allow_unicode=True,
+        sort_keys=False,
+    )
+    full_content = f"---\n{fm_yaml}---\n\n{content}"
+
+    # Atomic write: tempfile in same directory + os.rename
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(abs_path))
+        with os.fdopen(fd, "w") as f:
+            f.write(full_content)
+        os.rename(tmp_path, abs_path)
+    except OSError as e:
+        raise RuntimeError(str(e))
+
+    # ── Re-index ────────────────────────────────────────────────────
+    db_path = _db_path()
+    docs_dir = os.path.join(_ROOT_DIR, "docs")
+    internal_dir = os.path.join(_ROOT_DIR, "internal")
+    try:
+        build_index(root_dirs=[docs_dir, internal_dir], db_path=db_path)
+    except Exception as e:
+        logger.error("Index update failed after write: %s", e)
+        # Clean up file_metadata entry for the just-written path
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "DELETE FROM file_metadata WHERE path = ?",
+                (f"{section}/{path}",),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+        raise RuntimeError(f"file written but index update failed: {e}")
+
+    return json.dumps({"path": f"{section}/{path}"})
+
+
 # ── Custom call-tool handler ──────────────────────────────────────────
 # FastMCP returns tool errors as CallToolResult(isError=True), but the tests
 # expect JSON-RPC error responses (with "error" key) using specific codes:
@@ -152,6 +286,9 @@ mcp._mcp_server.request_handlers[CallToolRequest] = _call_tool_handler
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO, format="wywy-docs: %(levelname)s %(message)s"
+    )
     global _ROOT_DIR
     _ROOT_DIR = os.environ.get("WYWY_ROOT", os.getcwd())
     _ensure_index(_ROOT_DIR)
