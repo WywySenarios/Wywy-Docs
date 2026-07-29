@@ -515,6 +515,7 @@ class TestToolsList(unittest.TestCase):
         tool_names = {t["name"] for t in tools}
         self.assertIn("search_docs", tool_names)
         self.assertIn("get_doc", tool_names)
+        self.assertIn("delete_doc", tool_names)
 
 
 class TestSearchDocsTool(unittest.TestCase):

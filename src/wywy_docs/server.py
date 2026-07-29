@@ -56,6 +56,56 @@ def _ensure_index(root_dir: str) -> None:
         build_index(root_dirs=[docs_dir, internal_dir], db_path=db)
 
 
+# ── Path helpers ────────────────────────────────────────────────────────
+
+
+def _normalize_doc_path(path: str) -> str:
+    """Strip leading/trailing slashes, reject path traversal, and
+    append ``.mdx`` if no extension is present.
+
+    Args:
+        path: Relative document path (e.g. ``foo/bar`` or ``/foo/bar/``).
+
+    Returns:
+        Normalized path (e.g. ``foo/bar.mdx``).
+
+    Raises:
+        ValueError: If path contains ``..`` traversal.
+    """
+    path = path.strip("/")
+
+    if ".." in path.split("/"):
+        raise ValueError("path traversal ('..') is not allowed")
+
+    if not path.endswith(".mdx"):
+        path = path + ".mdx"
+
+    return path
+
+
+def _resolve_section_path(section: str, path: str) -> str:
+    """Resolve an absolute filesystem path within a section, guarding
+    against symlink-based directory escape.
+
+    Args:
+        section: ``"docs"`` or ``"internal"``.
+        path: Normalized path relative to the section directory.
+
+    Returns:
+        Absolute, symlink-resolved path.
+
+    Raises:
+        ValueError: If the resolved path escapes the section directory.
+    """
+    section_dir = os.path.join(_ROOT_DIR, section)
+    abs_path = os.path.join(section_dir, path)
+    real_abs = os.path.realpath(abs_path)
+    real_prefix = os.path.realpath(section_dir)
+    if not real_abs.startswith(real_prefix + "/") and real_abs != real_prefix:
+        raise ValueError("path escapes the allowed directory via symlink")
+    return abs_path
+
+
 # ── Tool implementations ──────────────────────────────────────────────
 
 
@@ -128,26 +178,9 @@ def write_doc(
         content: Document content (body text, after frontmatter).
         frontmatter: Optional YAML frontmatter fields.
     """
-    # Normalize path: strip leading/trailing slashes
-    path = path.strip("/")
-
-    # Reject path traversal
-    if ".." in path.split("/"):
-        raise ValueError("path traversal ('..') is not allowed")
-
-    # Add .mdx extension if not present
-    if not path.endswith(".mdx"):
-        path = path + ".mdx"
-
-    # Build full path
-    section_dir = os.path.join(_ROOT_DIR, section)
-    abs_path = os.path.join(section_dir, path)
-
-    # Resolve symlinks on both target and allowed prefix, then compare
-    real_abs = os.path.realpath(abs_path)
-    real_prefix = os.path.realpath(section_dir)
-    if not real_abs.startswith(real_prefix + "/") and real_abs != real_prefix:
-        raise ValueError("path escapes the allowed directory via symlink")
+    # Normalize path and resolve symlink-safe absolute path
+    path = _normalize_doc_path(path)
+    abs_path = _resolve_section_path(section, path)
 
     # Check parent directory exists
     parent = os.path.dirname(abs_path)
@@ -241,6 +274,52 @@ def write_doc(
         raise RuntimeError(f"file written but index update failed: {e}")
 
     return json.dumps({"path": f"{section}/{path}"})
+
+
+@mcp.tool()
+def delete_doc(path: str):
+    """Delete a documentation file.
+
+    Args:
+        path: Document path relative to Wywy-Docs root.
+    """
+    path = path.strip("/")
+
+    # Determine section from path prefix
+    if path.startswith("docs/"):
+        section = "docs"
+    elif path.startswith("internal/"):
+        section = "internal"
+    else:
+        raise ValueError("path must be under docs/ or internal/")
+
+    # Strip section prefix and normalize
+    path = path[len(section) + 1 :]
+    path = _normalize_doc_path(path)
+    abs_path = _resolve_section_path(section, path)
+
+    # Delete file (idempotent: already gone → success)
+    try:
+        os.remove(abs_path)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        raise RuntimeError(str(e))
+
+    # Clean index entries
+    rel_path = f"{section}/{path}"
+    db = _db_path()
+    try:
+        conn = sqlite3.connect(db)
+        conn.execute("DELETE FROM docs_fts WHERE path = ?", (rel_path,))
+        conn.execute("DELETE FROM file_metadata WHERE path = ?", (rel_path,))
+        conn.commit()
+    except sqlite3.OperationalError as e:
+        raise RuntimeError(str(e))
+    finally:
+        conn.close()
+
+    return json.dumps({"path": rel_path, "deleted": True})
 
 
 # ── Custom call-tool handler ──────────────────────────────────────────
