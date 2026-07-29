@@ -1,0 +1,24 @@
+# CI — Wywy-Docs
+#
+# Builds the Docker test image and runs all tests inside the container.
+#
+# TODO: update runs-on tags when self-hosted runners are deployed.
+#   Default: runs-on: ubuntu-latest
+#   Self-hosted: runs-on: [self-hosted, wywy]
+
+name: Wywy-Docs CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: [self-hosted, wywy, dind]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests (Docker)
+        run: ./test.sh
