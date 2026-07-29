@@ -156,6 +156,7 @@ def get_doc(path: str):
     Args:
         path: Document path relative to Wywy-Docs root.
     """
+    path = _normalize_doc_path(path)
     abs_path = os.path.join(_ROOT_DIR, path)
     if not os.path.isfile(abs_path):
         raise ValueError("document not found")

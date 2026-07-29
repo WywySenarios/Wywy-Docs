@@ -645,6 +645,26 @@ class TestGetDocTool(unittest.TestCase):
         self.assertIn("Test Doc", body_text)
         self.assertIn("Full body content here", body_text)
 
+    def test_get_doc_appends_mdx_auto(self) -> None:
+        """Path without .mdx is normalized — .mdx appended automatically."""
+        resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 21,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_doc",
+                    "arguments": {"path": "docs/test"},
+                },
+            }
+        )
+        self.assertIn("result", resp)
+        content = resp["result"]["content"]
+        self.assertIsInstance(content, list)
+        body_text = " ".join(str(item.get("text", "")) for item in content)
+        self.assertIn("Test Doc", body_text)
+        self.assertIn("Full body content here", body_text)
+
     def test_get_doc_invalid_path_returns_error(self) -> None:
         """Invalid path returns JSON-RPC error -32602."""
         resp = self.client.send_message(
