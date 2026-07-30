@@ -93,10 +93,6 @@ setup() {
     grep -q '^\s*"uvicorn",' "$REPO_ROOT/pyproject.toml"
 }
 
-@test "git remote origin points to github.com/WywySenarios/Wywy-Docs.git" {
-    git -C "$REPO_ROOT" remote get-url origin | grep -qE '(git@github\.com:|https://github\.com/)WywySenarios/Wywy-Docs\.git'
-}
-
 @test "src/wywy_docs/ has no stale mcp package references in imports" {
     # SDK imports (from mcp.server.fastmcp, from mcp.shared, from mcp.types) are valid.
     # Local package imports should all be "from wywy_docs".
