@@ -34,27 +34,23 @@ RUN npm install -g bats
 # ── Project setup ───────────────────────────────────────────────────
 WORKDIR /app
 
-# Copy dependency manifests first (layer caching).
-COPY pyproject.toml ./
+# Copy dependency manifests and package source so uv sync can
+# install the local package in editable mode.
+COPY pyproject.toml uv.lock ./
 COPY src/ src/
 
-# Install project dependencies into .venv.
+# Repo-structure tests check for docs/ and internal/ symlinks.
+# Create them before uv sync so the package build can resolve them.
+RUN mkdir -p /etc/Wywy-Website-Control && \
+    ln -s /etc/Wywy-Website-Control/docs/ /app/docs && \
+    ln -s /etc/Wywy-Website-Control/internal/ /app/internal
+
+# Install project dependencies into .venv (locked).
 RUN uv sync
 
-# Copy the rest (tests, scripts, docs, .git/, etc.).
+# Copy the rest (tests, scripts, .git/, etc.).
 # .venv/ is excluded via .dockerignore so it doesn't overwrite the
 # venv created by RUN uv sync above.
 COPY . ./
-
-# Repo-structure tests check for docs/ and internal/ symlinks.
-# Create them pointing at a mountable path.  When the host
-# /etc/Wywy-Website-Control/{docs,internal} are not mounted, the
-# target directory is empty — repo-structure checks 7-8 pass (they
-# test the symlink itself, not content), but any content-dependent
-# test must create its own fixture data (the existing tests already do).
-RUN rm -f /app/docs /app/internal && \
-    mkdir -p /etc/Wywy-Website-Control && \
-    ln -s /etc/Wywy-Website-Control/docs/ /app/docs && \
-    ln -s /etc/Wywy-Website-Control/internal/ /app/internal
 
 CMD ["./run-tests.sh"]
