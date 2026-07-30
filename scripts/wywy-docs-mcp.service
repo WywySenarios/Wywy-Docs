@@ -9,6 +9,8 @@ StartLimitBurst=3
 Type=simple
 WorkingDirectory=%h/Documents/wywy
 Environment=WYWY_ROOT=%h/Documents/wywy
+# Set PORT to a custom listening port (default: 2530 if unset)
+Environment=PORT=
 ExecStart=%h/Documents/wywy/.venv/bin/python -m wywy_docs.server
 Restart=on-failure
 RestartSec=5

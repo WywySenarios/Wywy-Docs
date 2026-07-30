@@ -6,6 +6,7 @@ Exposes the FTS5 documentation index as MCP tools (``search_docs``,
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import os
@@ -369,10 +370,13 @@ def main() -> None:
     logging.basicConfig(
         level=logging.INFO, format="wywy-docs: %(levelname)s %(message)s"
     )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int)
+    args, _ = parser.parse_known_args()
     global _ROOT_DIR
     _ROOT_DIR = os.environ.get("WYWY_ROOT", os.getcwd())
     _ensure_index(_ROOT_DIR)
-    port = int(os.environ.get("PORT", "2530"))
+    port = args.port if args.port is not None else int(os.environ.get("PORT", "2530"))
     mcp.settings.port = port
     mcp.run(transport="sse")
 

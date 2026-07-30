@@ -25,6 +25,7 @@ EOF
 
     # Copy the wywy_docs module so Python can import it
     cp "$REPO_ROOT/src/wywy_docs/__init__.py" "$TEST_DIR/wywy_docs/__init__.py"
+    cp "$REPO_ROOT/src/wywy_docs/models.py"   "$TEST_DIR/wywy_docs/models.py"
     cp "$REPO_ROOT/src/wywy_docs/indexer.py"  "$TEST_DIR/wywy_docs/indexer.py"
     cp "$REPO_ROOT/src/wywy_docs/server.py"   "$TEST_DIR/wywy_docs/server.py"
 
@@ -158,5 +159,91 @@ exit(0 if ok else 1)
     cd "$TEST_DIR"
     rm -f wywy_docs/server.pid
     run ./scripts/stop-server.sh
+    [ "$status" -eq 0 ]
+}
+
+# ===========================================================================
+# PORT forwarding tests (start-server.sh)
+# ===========================================================================
+
+@test "start-server.sh: forwards PORT=3000 as --port 3000 to Python" {
+    cd "$TEST_DIR"
+    PORT=3000 ./scripts/start-server.sh
+
+    # PID file must exist
+    [ -f wywy_docs/server.pid ]
+    local pid
+    pid=$(cat wywy_docs/server.pid)
+    [[ "$pid" =~ ^[0-9]+$ ]]
+
+    # Give the process a moment to start
+    sleep 1
+
+    # The process must be alive
+    kill -0 "$pid" 2>/dev/null
+
+    # Read the full command line from /proc
+    # The cmdline file uses NUL bytes as separators; translate to spaces.
+    local cmdline
+    cmdline=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ') || true
+    echo "cmdline: $cmdline"
+
+    # The command line MUST contain "--port 3000"
+    echo "$cmdline" | grep -q "\-\-port 3000"
+}
+
+@test "start-server.sh: without PORT no --port argument" {
+    cd "$TEST_DIR"
+    ./scripts/start-server.sh
+
+    [ -f wywy_docs/server.pid ]
+    local pid
+    pid=$(cat wywy_docs/server.pid)
+    [[ "$pid" =~ ^[0-9]+$ ]]
+
+    sleep 1
+    kill -0 "$pid" 2>/dev/null
+
+    local cmdline
+    cmdline=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ') || true
+    echo "cmdline: $cmdline"
+
+    # When PORT is unset, no --port should appear
+    ! echo "$cmdline" | grep -q "\-\-port"
+}
+
+@test "start-server.sh: writes numeric PID to server.pid" {
+    cd "$TEST_DIR"
+    ./scripts/start-server.sh
+
+    [ -f wywy_docs/server.pid ]
+    local pid
+    pid=$(cat wywy_docs/server.pid)
+    [[ "$pid" =~ ^[0-9]+$ ]]
+    sleep 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+# ===========================================================================
+# PORT forwarding tests (wywy-docs-mcp.service)
+# ===========================================================================
+
+@test "wywy-docs-mcp.service: forwards PORT via Environment=PORT=" {
+    SERVICE_FILE="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/scripts/wywy-docs-mcp.service"
+    # The unit file MUST contain an Environment directive that forwards
+    # PORT when set.  Valid forms:
+    #   Environment=PORT=%e         (pass through from env)
+    #   Environment=PORT=
+    #   Environment="PORT=%e"
+    run grep -E '^\s*Environment=\s*"?PORT' "$SERVICE_FILE"
+    [ "$status" -eq 0 ]
+}
+
+@test "wywy-docs-mcp.service: unit file is syntactically valid" {
+    SERVICE_FILE="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/scripts/wywy-docs-mcp.service"
+    if ! command -v systemd-analyze &>/dev/null; then
+        skip "systemd-analyze not available on this system"
+    fi
+    run systemd-analyze verify "$SERVICE_FILE"
     [ "$status" -eq 0 ]
 }

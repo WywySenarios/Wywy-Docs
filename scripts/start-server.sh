@@ -19,5 +19,10 @@ if ! $PYTHON -c "import wywy_docs.indexer" 2>/dev/null; then
 	exit 1
 fi
 
-nohup $PYTHON -m wywy_docs.server >/dev/null 2>&1 &
+PORT_ARGS=""
+if [ -n "${PORT:-}" ]; then
+	PORT_ARGS="--port $PORT"
+fi
+
+nohup $PYTHON -m wywy_docs.server $PORT_ARGS >/dev/null 2>&1 &
 echo "$!" >"wywy_docs/server.pid"
