@@ -22,5 +22,13 @@ fi
 if [ -f "wywy_docs/server.pid" ]; then
 	pid=$(cat "wywy_docs/server.pid")
 	kill "$pid" 2>/dev/null || true
+	# Wait up to 10s for graceful shutdown, then force-kill.
+	for i in $(seq 1 10); do
+		kill -0 "$pid" 2>/dev/null || break
+		sleep 1
+	done
+	if kill -0 "$pid" 2>/dev/null; then
+		kill -9 "$pid" 2>/dev/null || true
+	fi
 	rm -f "wywy_docs/server.pid"
 fi
