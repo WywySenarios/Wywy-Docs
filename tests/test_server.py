@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import json
+import logging
 import os
 import queue
 import shutil
-import signal
 import socket
 import sqlite3
 import subprocess
@@ -31,6 +31,8 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 2530
 SERVER_TIMEOUT = 10  # max seconds to wait for server startup
 RESPONSE_TIMEOUT = 10  # max seconds to wait for a JSON-RPC response
+
+logger = logging.getLogger(__name__)
 
 
 # ===========================================================================
@@ -104,6 +106,63 @@ def _build_test_index(root: str, files: dict[str, str]) -> str:
         db_path=db_path,
     )
     return db_path
+
+
+@contextmanager
+def _with_server(root_dir: str, port: int):
+    """Start an MCP server subprocess for *root_dir* on *port*; stop on exit."""
+    server = ServerProcess(root_dir, port)
+    server.start()
+    try:
+        yield server
+    finally:
+        server.stop()
+
+
+def _verify_metadata(root_dir: str, rel_path: str, *, present: bool) -> None:
+    """Check whether *rel_path* exists in the ``file_metadata`` table.
+
+    Raises an AssertionError if the state does not match *present*.
+    """
+    db_path = os.path.join(root_dir, "wywy_docs", "docs_index.db")
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT path FROM file_metadata WHERE path = ?",
+            (rel_path,),
+        ).fetchall()
+        if present:
+            assert len(rows) == 1, f"Expected {rel_path!r} in file_metadata, got {rows}"
+        else:
+            assert len(rows) == 0, f"Expected {rel_path!r} removed"
+    finally:
+        conn.close()
+
+
+def _cleanup_ephemeral_files(root_dir: str, rel_paths: list[str]) -> None:
+    """Remove ephemeral test files and their index rows.
+
+    Best-effort: any failure is logged and swallowed so a cleanup
+    problem never cascades into the next test.
+    """
+    db_path = os.path.join(root_dir, "wywy_docs", "docs_index.db")
+    for rel_path in rel_paths:
+        try:
+            abs_path = os.path.join(root_dir, rel_path)
+            if os.path.isfile(abs_path):
+                os.remove(abs_path)
+            if os.path.isfile(db_path):
+                conn = sqlite3.connect(db_path)
+                try:
+                    conn.execute("DELETE FROM docs_fts WHERE path = ?", (rel_path,))
+                    conn.execute(
+                        "DELETE FROM file_metadata WHERE path = ?", (rel_path,)
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+        except Exception:
+            logger.warning("tearDown cleanup failed for %s", rel_path, exc_info=True)
 
 
 # ===========================================================================

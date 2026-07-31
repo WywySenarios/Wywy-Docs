@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sqlite3
 import tempfile
 import time
 import unittest
@@ -22,9 +21,11 @@ from tests.test_server import (
     MCPClient,
     ServerProcess,
     _build_test_index,
+    _cleanup_ephemeral_files,
     _create_file,
     _find_free_port,
     _setup_temp_wywy_root,
+    _verify_metadata,
 )
 
 HOST = "127.0.0.1"
@@ -77,6 +78,17 @@ class TestWriteDocTool(unittest.TestCase):
         cls.client.close()
         cls.server.stop()
         shutil.rmtree(cls.root_dir, ignore_errors=True)
+
+    def tearDown(self) -> None:
+        """Clean up artifacts created by the just-completed test.
+
+        Removes the file at ``{section}/{method_name}.mdx`` (if it exists)
+        and its entries in ``docs_fts`` and ``file_metadata`` so state
+        does not leak between test methods.
+        """
+        name = self._testMethodName
+        rel_paths = [f"{section}/{name}.mdx" for section in ("docs", "internal")]
+        _cleanup_ephemeral_files(self.root_dir, rel_paths)
 
     # ── JSON-RPC id counter ────────────────────────────────────────────
 
@@ -384,31 +396,10 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
         )
 
         # Quick sanity: file_metadata has the initial entry
-        self._verify_metadata("docs/initial.mdx", present=True)
+        _verify_metadata(self.root_dir, "docs/initial.mdx", present=True)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root_dir, ignore_errors=True)
-
-    # ── helpers ────────────────────────────────────────────────────────
-
-    def _verify_metadata(self, rel_path: str, *, present: bool) -> None:
-        db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
-        conn = sqlite3.connect(db_path)
-        try:
-            rows = conn.execute(
-                "SELECT path FROM file_metadata WHERE path = ?",
-                (rel_path,),
-            ).fetchall()
-            if present:
-                self.assertEqual(
-                    len(rows),
-                    1,
-                    f"Expected {rel_path!r} in file_metadata, got {rows}",
-                )
-            else:
-                self.assertEqual(len(rows), 0, f"Expected {rel_path!r} removed")
-        finally:
-            conn.close()
 
     # ── test ───────────────────────────────────────────────────────────
 
@@ -435,7 +426,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
             self.assertIn("file written but index update failed", str(ctx.exception))
 
         # The file_metadata entry for the new path must have been removed.
-        self._verify_metadata("docs/fail-test.mdx", present=False)
+        _verify_metadata(self.root_dir, "docs/fail-test.mdx", present=False)
 
 
 if __name__ == "__main__":

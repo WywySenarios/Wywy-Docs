@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -18,9 +17,11 @@ from tests.test_server import (
     MCPClient,
     ServerProcess,
     _build_test_index,
+    _cleanup_ephemeral_files,
     _create_file,
     _find_free_port,
     _setup_temp_wywy_root,
+    _verify_metadata,
 )
 
 HOST = "127.0.0.1"
@@ -43,28 +44,45 @@ class TestDeleteDocTool(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.root_dir = _setup_temp_wywy_root()
         cls.port = _find_free_port()
-
-        # Pre-create files for tests that exercise existing-doc deletion.
-        # The non-existent-file test deliberately has no pre-created file.
-        files = {
-            "docs/test_delete_existing_doc.mdx": (
-                "---\ntitle: Delete Existing\n---\n"
-                "UNIQUE_TERM_test_delete_existing_doc content."
-            ),
-            "docs/test_delete_auto_appends_mdx.mdx": (
-                "---\ntitle: Auto Append\n---\n"
-                "UNIQUE_TERM_test_delete_auto_appends_mdx content."
-            ),
-            "internal/test_delete_internal_doc.mdx": (
-                "---\ntitle: Internal Delete\n---\n"
-                "INTERNAL_UNIQUE_test_delete_internal_doc content."
-            ),
-        }
-        _build_test_index(cls.root_dir, files)
         cls.server = ServerProcess(cls.root_dir, cls.port)
         cls.server.start()
         cls.client = MCPClient(HOST, cls.port)
         cls.client.connect()
+
+    def setUp(self) -> None:
+        """Create this test's ephemeral file(s) and index them."""
+        name = self._testMethodName
+        contents = {
+            "test_delete_existing_doc": (
+                "docs/test_delete_existing_doc.mdx",
+                "---\ntitle: Delete Existing\n---\n"
+                "UNIQUE_TERM_test_delete_existing_doc content.",
+            ),
+            "test_delete_auto_appends_mdx": (
+                "docs/test_delete_auto_appends_mdx.mdx",
+                "---\ntitle: Auto Append\n---\n"
+                "UNIQUE_TERM_test_delete_auto_appends_mdx content.",
+            ),
+            "test_delete_internal_doc": (
+                "internal/test_delete_internal_doc.mdx",
+                "---\ntitle: Internal Delete\n---\n"
+                "INTERNAL_UNIQUE_test_delete_internal_doc content.",
+            ),
+        }
+        self._created_files: list[str] = []
+        if name in contents:
+            rel_path, content = contents[name]
+            self._created_files = [rel_path]
+            _build_test_index(self.root_dir, {rel_path: content})
+
+    def tearDown(self) -> None:
+        """Ensure this test's ephemeral files no longer exist.
+
+        Removes any file left behind (e.g. by a failed test) and its
+        entries in ``docs_fts`` and ``file_metadata`` so state does not
+        leak between test methods.
+        """
+        _cleanup_ephemeral_files(self.root_dir, self._created_files)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -97,26 +115,6 @@ class TestDeleteDocTool(unittest.TestCase):
         )
 
     # ── Internal helpers ───────────────────────────────────────────────
-
-    def _verify_metadata(self, rel_path: str, *, present: bool) -> None:
-        """Check whether *rel_path* exists in the ``file_metadata`` table."""
-        db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
-        conn = sqlite3.connect(db_path)
-        try:
-            rows = conn.execute(
-                "SELECT path FROM file_metadata WHERE path = ?",
-                (rel_path,),
-            ).fetchall()
-            if present:
-                self.assertEqual(
-                    len(rows),
-                    1,
-                    f"Expected {rel_path!r} in file_metadata, got {rows}",
-                )
-            else:
-                self.assertEqual(len(rows), 0, f"Expected {rel_path!r} removed")
-        finally:
-            conn.close()
 
     def _verify_not_searchable(self, term: str) -> None:
         """Call ``search_docs`` and assert *term* is absent from results."""
@@ -156,7 +154,7 @@ class TestDeleteDocTool(unittest.TestCase):
         self.assertFalse(os.path.isfile(full_path))
 
         # Metadata entry removed
-        self._verify_metadata(path_arg, present=False)
+        _verify_metadata(self.root_dir, path_arg, present=False)
 
         # Not searchable
         self._verify_not_searchable(f"UNIQUE_TERM_{name}")
@@ -243,7 +241,7 @@ class TestDeleteDocTool(unittest.TestCase):
         self.assertFalse(os.path.isfile(full_path))
 
         # Metadata entry removed
-        self._verify_metadata(path_arg, present=False)
+        _verify_metadata(self.root_dir, path_arg, present=False)
 
         # Not searchable
         self._verify_not_searchable(f"INTERNAL_UNIQUE_{name}")
