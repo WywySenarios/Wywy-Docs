@@ -126,7 +126,8 @@ def search_docs(query: str, max_results: int = 10):
         cur = conn.execute(
             """SELECT title, path,
                       snippet(docs_fts, 2, '<b>', '</b>', '...', 48) AS excerpt,
-                      rank
+                      rank,
+                      section
                FROM docs_fts
                WHERE docs_fts MATCH ?
                ORDER BY rank
@@ -139,7 +140,7 @@ def search_docs(query: str, max_results: int = 10):
                 "path": row[1],
                 "excerpt": row[2],
                 "score": float(row[3]) if row[3] is not None else 0.0,
-                "section": None,
+                "section": row[4],
             }
             for row in cur.fetchall()
         ]

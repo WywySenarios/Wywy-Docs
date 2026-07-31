@@ -528,9 +528,10 @@ class TestSearchDocsTool(unittest.TestCase):
         _build_test_index(
             cls.root_dir,
             {
-                "docs/hello.mdx": "---\ntitle: Hello World\n---\nThis is a greeting document.",
+                "docs/hello.mdx": "---\ntitle: Hello World\n---\nThis is a shared_term greeting document.",
                 "docs/goodbye.mdx": "---\ntitle: Goodbye\n---\nFarewell message.",
                 "docs/python.mdx": "---\ntitle: Python Guide\n---\nPython is a programming language.",
+                "internal/guide.mdx": "---\ntitle: Internal Guide\n---\nThis is an internal guide with shared_term.",
             },
         )
         cls.server = ServerProcess(cls.root_dir, cls.port)
@@ -564,6 +565,34 @@ class TestSearchDocsTool(unittest.TestCase):
         self.assertIn("Python", body_text)
         # At least one result should be present
         self.assertGreater(len(content), 0)
+
+    def test_search_docs_returns_section(self) -> None:
+        """Results include a ``section`` field ("docs" or "internal") matching the path prefix."""
+        resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_docs",
+                    "arguments": {"query": "shared_term", "max_results": 10},
+                },
+            }
+        )
+        self.assertIn("result", resp)
+        content = resp["result"]["content"]
+        self.assertIsInstance(content, list)
+        body_text = " ".join(str(item.get("text", "")) for item in content)
+        results = json.loads(body_text)
+        self.assertGreater(len(results), 0)
+        for r in results:
+            self.assertIn("section", r)
+            self.assertIsNotNone(r["section"])
+            path = r["path"]
+            if path.startswith("docs/"):
+                self.assertEqual(r["section"], "docs")
+            elif path.startswith("internal/"):
+                self.assertEqual(r["section"], "internal")
 
     def test_search_docs_empty_query_returns_error(self) -> None:
         """Empty query returns JSON-RPC error -32602."""
