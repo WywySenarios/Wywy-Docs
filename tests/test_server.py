@@ -71,6 +71,21 @@ def _setup_temp_wywy_root() -> str:
     return root
 
 
+def _setup_temp_wywy_root_missing(*, docs: bool = False, internal: bool = False) -> str:
+    """Create a temporary root with ``docs/``/``internal/`` absent as selected.
+
+    Unlike ``_setup_temp_wywy_root``, the requested section directories are
+    NOT created, so the server's ``_ensure_index`` must handle their absence
+    (warn + still create an empty index).  Returns the path to the temp root.
+    """
+    root = tempfile.mkdtemp()
+    if docs:
+        os.makedirs(os.path.join(root, "docs"))
+    if internal:
+        os.makedirs(os.path.join(root, "internal"))
+    return root
+
+
 def _build_test_index(root: str, files: dict[str, str]) -> str:
     """Create sample .mdx *files* (rel_path -> content) under *root* and
     build the FTS5 index.  Returns the database path.
@@ -359,19 +374,9 @@ class TestServerEndpoints(unittest.TestCase):
     def tearDown(self) -> None:
         shutil.rmtree(self.root_dir, ignore_errors=True)
 
-    # -- individual server per test ---------------------------------------
-    @contextmanager
-    def _with_server(self):
-        server = ServerProcess(self.root_dir, self.port)
-        server.start()
-        try:
-            yield server
-        finally:
-            server.stop()
-
     def test_sse_endpoint_returns_200(self) -> None:
         """GET /sse returns HTTP 200 (SSE connection established)."""
-        with self._with_server():
+        with _with_server(self.root_dir, self.port):
             resp = urlopen(f"http://{HOST}:{self.port}/sse", timeout=5)
             self.assertEqual(resp.status, 200)
             # The connection stays open; read a bit to confirm SSE framing.
@@ -380,7 +385,7 @@ class TestServerEndpoints(unittest.TestCase):
 
     def test_messages_endpoint_returns_202(self) -> None:
         """POST /messages?session_id=... returns 202 (message accepted)."""
-        with self._with_server():
+        with _with_server(self.root_dir, self.port):
             # Establish SSE session via MCPClient to discover session URL
             client = MCPClient(HOST, self.port)
             client.connect()
@@ -426,8 +431,7 @@ class TestServerEndpoints(unittest.TestCase):
         Captures ALL stderr to catch any LookupError, ModuleNotFoundError,
         or other runtime failure.
         """
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        venv_python = os.path.join(project_root, ".venv", "bin", "python")
+        venv_python = os.path.join(_PROJECT_ROOT, ".venv", "bin", "python")
         self.assertTrue(
             os.path.isfile(venv_python),
             f"Venv Python not found at {venv_python}",
@@ -444,7 +448,7 @@ class TestServerEndpoints(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 timeout=10,
-                cwd=project_root,
+                cwd=_PROJECT_ROOT,
             )
             self.assertEqual(
                 r.returncode,
@@ -457,12 +461,12 @@ class TestServerEndpoints(unittest.TestCase):
         # Now start the server as systemd would
         env = os.environ.copy()
         env["PORT"] = "2530"  # production default, may be in use
-        env["WYWY_ROOT"] = project_root
+        env["WYWY_ROOT"] = _PROJECT_ROOT
         proc = subprocess.Popen(
             [venv_python, "-m", "wywy_docs.server"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=project_root,
+            cwd=_PROJECT_ROOT,
             env=env,
         )
         try:
@@ -767,6 +771,152 @@ class TestAutoBuildIndex(unittest.TestCase):
             self.assertEqual(before_count, after_count)
         finally:
             server.stop()
+
+
+class TestEnsureIndexMissingDirectories(unittest.TestCase):
+    """``_ensure_index`` warns when ``docs/`` or ``internal/`` are missing
+    but still creates an empty FTS5 index (server does not crash).
+
+    Direct-import test (no subprocess), mirroring
+    ``TestDeleteDocToolIndexFailure`` in ``tests/test_delete_doc.py``.
+    """
+
+    def setUp(self) -> None:
+        # No docs/ or internal/ subdirectories.  ``_ensure_index`` creates
+        # the wywy_docs dir itself; docs/ and internal/ stay missing.
+        self.root_dir = _setup_temp_wywy_root_missing()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root_dir, ignore_errors=True)
+
+    def test_ensure_index_warns_when_docs_and_internal_missing(self) -> None:
+        """Missing docs/ and internal/ produce warnings plus an empty FTS5
+        index instead of a crash."""
+        import wywy_docs.server as server_mod  # type: ignore[attr-defined]
+
+        with self.assertLogs(server_mod.logger, level="WARNING") as cm:
+            server_mod._ensure_index(self.root_dir)
+
+        log_text = "\n".join(cm.output)
+        self.assertIn("docs directory does not exist", log_text)
+        self.assertIn("internal directory does not exist", log_text)
+
+        # Index database is still created with an empty FTS5 table.
+        db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
+        self.assertTrue(os.path.isfile(db_path))
+        conn = sqlite3.connect(db_path)
+        try:
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertIn("docs_fts", tables)
+        self.assertEqual(count, 0)
+
+
+class TestServerMissingDirectories(unittest.TestCase):
+    """The real server (subprocess) starts and serves an empty index when
+    ``docs/``/``internal/`` are missing, instead of crashing.
+
+    Subprocess-level counterpart of ``TestEnsureIndexMissingDirectories``:
+    exercises the same ``_ensure_index`` behaviour through the actual
+    ``wywy_docs.server`` entry point via ``ServerProcess``.
+    """
+
+    def setUp(self) -> None:
+        # Neither docs/ nor internal/ exists — the server must start anyway
+        # and create an empty index.  The wywy_docs/ dir is created by
+        # ``_ensure_index`` itself.
+        self.root_dir = _setup_temp_wywy_root_missing()
+        self.port = _find_free_port()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root_dir, ignore_errors=True)
+
+    def test_server_starts_without_docs_and_internal(self) -> None:
+        """Starting the server with neither section dir present does not crash."""
+        # _with_server calls server.start(), which raises RuntimeError if
+        # the process exits early.
+        with _with_server(self.root_dir, self.port) as server:
+            pass
+
+    def test_index_created_empty_without_dirs(self) -> None:
+        """Missing sections still produce a ``docs_fts`` table with zero rows."""
+        with _with_server(self.root_dir, self.port) as server:
+            db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
+            self.assertTrue(os.path.isfile(db_path))
+            conn = sqlite3.connect(db_path)
+            try:
+                count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(count, 0)
+
+    def test_search_docs_returns_empty_when_index_empty(self) -> None:
+        """search_docs on an empty index returns ``[]`` for a valid query."""
+        with _with_server(self.root_dir, self.port) as server:
+            client = MCPClient(HOST, self.port)
+            client.connect()
+            try:
+                resp = client.send_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 30,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "search_docs",
+                            "arguments": {"query": "nonexistent_term"},
+                        },
+                    }
+                )
+                self.assertIn("result", resp)
+                content = resp["result"]["content"]
+                body_text = " ".join(str(item.get("text", "")) for item in content)
+                results = json.loads(body_text)
+                self.assertEqual(results, [])
+            finally:
+                client.close()
+
+    def test_mixed_state_warns_for_missing_dir_only(self) -> None:
+        """With only ``docs/`` present: warn about ``internal/`` only and
+        index files from the existing ``docs/`` directory."""
+        _create_file(
+            self.root_dir,
+            "docs/only.mdx",
+            "---\ntitle: Only\n---\nZephyrflorabranch content for searching.",
+        )
+        with _with_server(self.root_dir, self.port) as server:
+            client = MCPClient(HOST, self.port)
+            client.connect()
+            try:
+                resp = client.send_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 40,
+                        "method": "tools/call",
+                        "params": {
+                            "name": "search_docs",
+                            "arguments": {"query": "zephyrflorabranch"},
+                        },
+                    }
+                )
+                self.assertIn("result", resp)
+                content = resp["result"]["content"]
+                body_text = " ".join(str(item.get("text", "")) for item in content)
+                results = json.loads(body_text)
+                self.assertGreater(len(results), 0)
+                self.assertEqual(results[0]["path"], "docs/only.mdx")
+            finally:
+                client.close()
+
+        stderr = server._read_stderr()
+        self.assertIn("internal directory does not exist", stderr)
+        self.assertNotIn("docs directory does not exist", stderr)
 
 
 class TestServerStartupTime(unittest.TestCase):

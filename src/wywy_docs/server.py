@@ -47,13 +47,28 @@ def _db_path(root_dir: str | None = None) -> str:
     return os.path.join(root_dir or _ROOT_DIR, "wywy_docs", "docs_index.db")
 
 
+def _section_dirs(root_dir: str) -> tuple[str, str]:
+    """Return the conventional ``docs/`` and ``internal/`` paths under *root_dir*."""
+    return (
+        os.path.join(root_dir, "docs"),
+        os.path.join(root_dir, "internal"),
+    )
+
+
 def _ensure_index(root_dir: str) -> None:
-    """Build the FTS5 index if ``docs_index.db`` does not exist."""
+    """Build the FTS5 index if ``docs_index.db`` does not exist.
+
+    Warns (without crashing) if ``docs/`` or ``internal/`` is missing;
+    the index is still created, empty.
+    """
     db = _db_path(root_dir)
     if not os.path.isfile(db):
         os.makedirs(os.path.dirname(db), exist_ok=True)
-        docs_dir = os.path.join(root_dir, "docs")
-        internal_dir = os.path.join(root_dir, "internal")
+        docs_dir, internal_dir = _section_dirs(root_dir)
+        if not os.path.isdir(docs_dir):
+            logger.warning("docs directory does not exist: %s", docs_dir)
+        if not os.path.isdir(internal_dir):
+            logger.warning("internal directory does not exist: %s", internal_dir)
         build_index(root_dirs=[docs_dir, internal_dir], db_path=db)
 
 
@@ -257,8 +272,7 @@ def write_doc(
 
     # ── Re-index ────────────────────────────────────────────────────
     db_path = _db_path()
-    docs_dir = os.path.join(_ROOT_DIR, "docs")
-    internal_dir = os.path.join(_ROOT_DIR, "internal")
+    docs_dir, internal_dir = _section_dirs(_ROOT_DIR)
     try:
         build_index(root_dirs=[docs_dir, internal_dir], db_path=db_path)
     except Exception as e:
