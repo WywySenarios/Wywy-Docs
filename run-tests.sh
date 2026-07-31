@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "==> Python tests..."
-uv run python -m pytest tests/ -v
+uv run --offline python -m pytest tests/ -v
 
 echo ""
 echo "==> BATS tests..."
