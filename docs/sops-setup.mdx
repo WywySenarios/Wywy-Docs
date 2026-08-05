@@ -1,0 +1,100 @@
+---
+title: SOPS + age Setup
+published: 2026-07-23T02:48:37+00:00
+---
+
+This guide walks through setting up [SOPS](https://github.com/getsops/sops) with the [age](https://age-encryption.org/) encryption backend to store secrets safely in this repository. Once configured, encrypted secrets can be committed to git and decrypted by ArgoCD via a Config Management Plugin during sync.
+
+## 1. Install the age key generator
+
+```bash
+# age binary (key generation + encryption/decryption)
+sudo apt-get install age
+```
+
+Alternatively, download the latest release from [github.com/CyanAsterisk/age](https://github.com/CyanAsterisk/age/releases).
+
+## 2. Install SOPS
+
+```bash
+curl -LO https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.linux.amd64
+sudo install -m 755 sops-v3.13.2.linux.amd64 /usr/local/bin/sops
+rm sops-v3.13.2.linux.amd64
+```
+
+Verify the installation:
+
+```bash
+sops --version
+```
+
+## 3. Generate an age key pair
+
+```bash
+mkdir -p ~/.config/sops/age
+age-keygen -o ~/.config/sops/age/keys.txt
+```
+
+This creates a key file with a comment line showing the public key:
+
+```
+# created: 2026-07-23T02:48:37+00:00
+# public key: age1abc123def456...
+AGE-SECRET-KEY-1...
+```
+
+**Keep `~/.config/sops/age/keys.txt` safe** — it is the only way to decrypt secrets encrypted with this key.
+
+## 4. Configure `.sops.yaml`
+
+The repository already has a `.sops.yaml` at the root. Paste your public key in:
+
+```yaml
+creation_rules:
+  - path_regex: secrets/.*
+    age: age1abc123def456...
+```
+
+This tells SOPS to encrypt all files under `secrets/` with your age key.
+
+## 5. Encrypt a secret
+
+```bash
+# Encrypt a plaintext file
+sops --encrypt secrets/admin.txt > secrets/admin.txt.sops
+
+# Remove the plaintext file
+rm secrets/admin.txt
+
+# Commit the encrypted file
+git add secrets/admin.txt.sops .sops.yaml
+git commit -m "chore: encrypt admin secret with SOPS"
+```
+
+You can also encrypt in-place with SOPS:
+
+```bash
+sops --encrypt --in-place secrets/admin.txt
+```
+
+## 6. Decrypt a secret
+
+```bash
+sops --decrypt secrets/admin.txt.sops
+```
+
+Or decrypt to stdout:
+
+```bash
+sops --decrypt secrets/admin.txt.sops > secrets/admin.txt
+```
+
+## 7. Usage notes
+
+- **Never commit plaintext secrets** — once a file is encrypted, delete the plaintext version and only commit the `.sops` or `.enc` file.
+- **Key recovery** — if `~/.config/sops/age/keys.txt` is lost, encrypted files cannot be recovered. Back it up securely (e.g. to a password manager or offline storage).
+- **Multiple keys** — you can add multiple age public keys to the `creation_rules` so multiple people (or CI) can decrypt.
+
+## 8. ArgoCD integration
+
+On the cluster, SOPS files are decrypted by the ArgoCD Config Management Plugin. See the [ArgoCD install script](../scripts/install/k8s/argocd.sh) — the SOPS CMP sidecar is configured there (once implemented).

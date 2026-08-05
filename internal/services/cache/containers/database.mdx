@@ -1,0 +1,20 @@
+---
+title: database (cache)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+PostgreSQL 18 with PostGIS backing the cache service.
+
+## Dockerfile
+
+`apps/postgres/Dockerfile` — `postgres:18` base with PostGIS installed.
+
+## Docker Compose
+
+Base config in `docker-compose.base.yml`: healthcheck (`pg_isready`), `shm_size: 128mb`. Test mode overrides to `restart: no`, `PGDATA: /tmp/postgres`, and mounts dev PG config + `pg_hba.conf`.
+
+## Volumes
+
+- Data: `${DATA_DIR}/cache/postgres:/var/lib/postgresql/data`

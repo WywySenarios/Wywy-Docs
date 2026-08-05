@@ -1,0 +1,20 @@
+---
+title: Naming Convention (snake_case)
+published: 2026-05-22T00:00:00
+---
+
+## API Naming Convention
+
+All database names, table names, and column names in API calls **MUST** be `lower_snake_case`.
+
+Config schemas (`config/config.yml`) may use human-readable names — the frontend converts them with `toSnakeCase()` before sending requests. Any new config fields that map to API identifiers should follow snake_case for consistency.
+
+## Reserved identifiers
+
+Reserved suffixes: `_tags`, `_tag_aliases`, `_tag_names`, `_tag_groups`, `_descriptors`, `_comments`.
+
+Reserved database name: `info`. Reserved table name: `sync_status`. Reserved column names: `id`, `user`, `users`, `primary_tag`.
+
+## Relation to Serialization
+
+See [`docs/data/api/serialization.mdx`](../../docs/data/api/serialization.mdx) for how snake_case is applied at the JSON key level during serialization. This convention covers the broader naming policy across databases, tables, columns, and API fields.

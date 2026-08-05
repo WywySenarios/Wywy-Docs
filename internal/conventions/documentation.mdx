@@ -1,0 +1,110 @@
+---
+title: Documentation Conventions
+published: 2026-06-26T03:27:48+00:00
+---
+
+## Two documentation tiers
+
+The repository has two documentation directories with distinct audiences and purposes:
+
+| Directory   | Audience                                        | Purpose                                                                              | Examples                                                           |
+| ----------- | ----------------------------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `docs/`     | **Operators** setting up or running the system  | Hardware requirements, architecture, API reference, data model, operational commands | Architecture docs, API serialization, data model, control commands |
+| `internal/` | **Developers** writing code or planning changes | Conventions, implementation plans, reports, service definitions                      | This file, migration plan, reports                                 |
+
+### docs/ — operations / setup
+
+Everything in `docs/` is written for someone who needs to **set up, understand, or operate** the system. This includes:
+
+- **Hardware requirements** — what machines, storage, and networking are needed
+- **Architecture** — how the system is designed, where services run, how they connect
+- **API reference** — endpoints, serialization, authentication
+- **Data model** — databases, tables, columns, descriptors, metrics
+- **Operational commands** — how to deploy, enter containers, back up data
+- **How-to guides** — setup procedures, maintenance tasks
+
+Docs should be clear enough that someone can set up the entire infrastructure from scratch by reading them. Target/in-progress architecture documents (with `status: target (in progress)` frontmatter) are allowed in `docs/architecture/` because knowing the planned hardware and topology is essential for planning new hardware purchases.
+
+### internal/ — development / planning
+
+Everything in `internal/` is written for someone **writing code or planning development work**. It is not relevant to setting up or operating the system.
+
+Contents include:
+
+- **Conventions** (naming, code style, filesystem permissions, agent prompts)
+- **Implementation plans** (step-by-step plans for specific features or migrations)
+- **Reports** (test results, audits, analyses)
+- **Service definitions** (service inventory, repo locations)
+- **Todo lists** (task tracking)
+
+Documents in `internal/` may describe in-progress or aspirational states. They are not authoritative for how the system currently behaves.
+
+## File naming
+
+- File names use `kebab-case.mdx`
+- No numeric prefixes — use descriptive titles instead
+- The frontmatter `title` field is the canonical name, not the filename
+
+**Good:** `python.mdx`, `backup-migration-plan.mdx`, `wywy-website-control.mdx`
+
+**Avoid:** `01-infrastructure.mdx`, `architecture-overview.md`, `README.md`
+
+## Prose formatting
+
+Do not manually wrap lines in prose paragraphs. Write each paragraph
+as a single long line — the formatter (or editor) will handle display
+wrapping. Manual line breaks in the middle of paragraphs produce
+noisy diffs and are invisible in rendered output, making the source
+deceptive.
+
+**Bad** — semantic line wrapping:
+
+```md
+This is a paragraph that has been manually
+wrapped at around 70 characters. It looks
+fine in the editor but makes diffs noisier.
+```
+
+**Good** — single line, let the formatter handle width:
+
+```md
+This is a paragraph that is one long line. The formatter or editor handles display wrapping.
+```
+
+This applies to all documentation files (`docs/*.mdx` and
+`internal/*.mdx`). Code blocks, tables, and lists are exempt —
+format those for readability in source.
+
+## Frontmatter
+
+All documentation files SHOULD include frontmatter with at minimum:
+
+```yaml
+---
+title: Page Title
+published: 2026-06-26T03:27:48+00:00
+---
+```
+
+The `published` and `last_updated` fields are **auto-populated** by the `write_doc` tool and **must not be set manually** in frontmatter — they are reserved for server-side management. `published` is set on creation and preserved on updates; `last_updated` is updated on every write.
+
+Documents describing a target or in-progress state SHOULD include a `status` field:
+
+```yaml
+---
+title: Infrastructure
+published: 2026-06-26T03:27:48+00:00
+last_updated: 2026-06-26T03:27:48+00:00
+status: target (in progress)
+---
+```
+
+> **Note:** `published` and `last_updated` are auto-managed by `write_doc`. Do not include them when calling `write_doc` — they will be rejected with a validation error.
+
+Valid status values:
+
+- `target (in progress)` — design for something being actively built
+- `target (draft)` — initial sketch, not yet approved
+- `target (complete)` — implemented, but the old system still coexists
+- `active` — describes the current live state (default, can be omitted)
+- `deprecated` — kept for reference but no longer accurate

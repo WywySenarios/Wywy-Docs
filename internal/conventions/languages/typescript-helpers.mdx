@@ -1,0 +1,65 @@
+---
+title: TypeScript Helpers Conventions
+published: 2026-06-05T00:00:00
+---
+
+## Directory structure
+
+Utility functions live in `src/utils/` with domain-specific subdirectories:
+
+```
+src/utils/
+  parse.ts                # String conversion utilities (toSnakeCase, etc.)
+  math.ts                 # Math utilities
+  math/
+    datatype.ts
+    selectors/
+      matrix/
+        step_within.ts
+      row/
+        closest_step.ts
+    transformations/
+      basic.ts
+  datatypes/
+    geodetic.ts           # Geodetic coordinate helpers
+  data/
+    chart.ts              # Chart data utilities
+    default-values.ts     # Default value generators
+    deserialization.ts    # API response deserialization
+    endpoints.ts          # Endpoint URL builders
+    http.ts               # HTTP request helpers
+    iterators.ts          # Data iteration utilities
+    schema.ts             # Schema utilities
+    schema-context.tsx     # React context for schemas
+    search.ts             # Search utilities
+    serialization.ts      # API request serialization
+    form/
+      entry-handlers.ts
+      full-entry-handlers.ts
+      updates.ts
+      useAutoPopulate.ts
+```
+
+## Path alias
+
+The `@utils/` alias resolves to `./src/utils/`:
+
+```ts
+import { toSnakeCase } from "@utils/parse";
+```
+
+## Re-export pattern
+
+Each subdirectory with multiple files SHOULD re-export from an index file or the top-level utility file. For example, `src/utils/data/` utilities imported via `@utils/data/...`.
+
+## Purpose
+
+Utilities are pure functions with no side effects. They handle:
+- Data transformation and serialization.
+- URL/endpoint construction.
+- Mathematical computation.
+- Type-safe data access and iteration.
+
+## Future
+
+Utility functions will be extracted into a shared SDK package within the monorepo (see [`typescript-packaging.mdx`](./typescript-packaging.mdx)).

@@ -1,0 +1,148 @@
+---
+title: Agent Prompt Conventions
+published: 2026-06-05T00:00:00
+---
+
+## Structure
+
+Every agent prompt MUST follow this 5-section structure:
+
+```
+# Role
+# Context
+# Task
+# Constraints
+# Output
+```
+
+### Role
+
+One sentence describing what the agent is.
+
+```
+# Role
+
+You are the Planner agent. You ingest user input and produce a
+structured implementation plan.
+```
+
+### Context
+
+Injected by the orchestrator at container start. Must include:
+- Previous stage summary (from `context/summary.md`)
+- User input (if pipeline was blocked)
+- The current plan (`artifacts/plan.md`)
+- Relevant artifacts (spec, test files, etc.)
+
+```
+# Context
+
+## Previous Stage Summary
+{summary}
+
+## User Input
+{user_input}
+
+## Plan
+{plan_md}
+```
+
+### Task
+
+Specific instructions for the stage. Must be concrete and actionable.
+
+```
+# Task
+
+1. Read the approved plan at `artifacts/plan.md`.
+2. Write the minimal implementation to make all tests pass.
+3. Do NOT modify any test files.
+```
+
+### Constraints
+
+Explicit boundaries the agent must not cross.
+
+```
+# Constraints
+
+- Never modify files in `artifacts/tests/`.
+- Never call `sudo` or `rm -rf`.
+- Never make network calls to external services.
+- Only write files under `/workspace/` and `/artifacts/`.
+- The `/context/` directory is write-once — create new files, never edit existing ones.
+```
+
+### Output
+
+Exact deliverables the agent must produce.
+
+```
+# Output
+
+- Modified source files on the workspace volume.
+- `context/summary_coder.md` — short summary of changes made.
+- `context/verbose_summary_coder.md` — detailed log of all actions.
+- Update `state.json`: set `stages.coder.status = "completed"`.
+```
+
+## YAML frontmatter
+
+OpenCode agent definitions use YAML frontmatter for configuration:
+
+```yaml
+---
+name: agent-name
+mode: primary
+permission:
+  question: allow
+  edit:
+    - "**/*.py"
+  read:
+    - "**/*"
+  doom_loop: ask
+  external_directory:
+    - "/tmp/opencode"
+---
+```
+
+The 5-section body follows the frontmatter.
+
+## Forbidden instructions
+
+Agents MUST NOT be instructed to:
+- Run `sudo` or `rm -rf`.
+- Make network calls to external services (production endpoints, third-party APIs).
+- Write files outside `/workspace/`, `/artifacts/`, `/state/`, `/logs/`, and `/context/`.
+- Modify files in `/context/` — create new files only.
+- Push to git remotes or use git credentials.
+
+## Logging instructions
+
+Every agent prompt must include logging instructions:
+
+```
+Log stage start, every major decision, and stage completion to
+`/logs/{STAGE}.log` in structured JSON-lines format. Minimum entries:
+- Stage start (INFO)
+- Any WARN-level conditions
+- Stage completion/failure (INFO/ERROR)
+```
+
+## Context injection format
+
+Orchestrator injects context using this exact format before the agent starts:
+
+```
+## Previous Stage Summary
+
+{summary.md content}
+
+## User Input
+
+{latest user-response.md content}
+
+## Plan
+
+{plan.md content}
+```

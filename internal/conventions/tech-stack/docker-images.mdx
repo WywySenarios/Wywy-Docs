@@ -1,0 +1,193 @@
+---
+title: Docker Images Conventions
+published: 2026-05-31T00:00:00
+---
+
+> **Language:** Bash — see [`languages/bash.mdx`](../languages/bash.mdx).
+
+## Base Images
+
+Pin `FROM` images to absolute tags — never use floating tags like `latest` or `slim`.
+
+| Base Image                    | Used By                                         |
+| ----------------------------- | ----------------------------------------------- |
+| `node:lts`                    | Wywy-Website: astro-app, electron-app, pipeline |
+| `python:3.14.0-slim-bookworm` | Cache & Master-Database: create_tables, sync    |
+| `python:3.12-slim`            | Cache & Master-Database: tests                  |
+| `postgres:18`                 | Cache & Master-Database: postgres               |
+| `debian:trixie-20230612`      | Cache & Master-Database: cloudflared            |
+| `gcc:15-trixie`               | Master-Database: sql-receptionist (multi-stage) |
+
+## User Convention
+
+Every container **MUST** run as a non-root user.
+
+- Group GID: `2523` (`Wywy-Website`)
+- UID: passed via `USER_ID` build arg
+
+The UID scheme:
+
+| Service         | UID   |
+| --------------- | ----- |
+| Wywy-Website    | 25230 |
+| Master-Database | 25231 |
+| Cache           | 25232 |
+
+Create the user in the Dockerfile:
+
+```dockerfile
+ARG USER_ID
+RUN groupadd -g 2523 Wywy-Website && useradd -m -u ${USER_ID} -g Wywy-Website wywy
+USER wywy
+```
+
+## Build Context
+
+All Docker Compose files live in `<repo>/docker/`. The build context is always `../` (repository root), relative to the compose file.
+
+```yml
+services:
+  astro-app:
+    build:
+      context: ../
+      dockerfile: apps/astro-app/Dockerfile
+```
+
+## No Registries
+
+Images are **never** pushed to or pulled from any registry. All images are built locally via `docker compose build` (or `docker compose up --build`). No explicit image names or tags are assigned — Docker Compose auto-generates names from the compose project name and service name (e.g. `cache-sync`, `master-database-sql_receptionist`).
+
+Tagging images for manual inspection is allowed during development but must never be committed or scripted.
+
+## Docker Compose Layering
+
+Every service uses three environment-specific compose files:
+
+- `docker-compose.base.yml` — shared definition for all environments
+- `docker-compose.dev.yml` — dev overrides (hot-reload, debug tools, watching, external networks)
+- `docker-compose.prod.yml` — prod overrides (Cloudflare tunnels, gunicorn, release build targets, network isolation)
+- `docker-compose.test.yml` — test overrides (ephemeral database, test services)
+
+They are layered at runtime:
+
+```bash
+docker compose \
+  -f docker/docker-compose.base.yml \
+  -f docker/docker-compose.dev.yml \
+  --env-file /etc/Wywy-Website-Control/config/cache/.env.cache.dev \
+  up --build
+```
+
+Environment-specific overrides are additive — they extend services defined in `base.yml`. Never duplicate a service definition in an override file unless the intent is to override specific keys.
+
+## Secrets
+
+Sensitive values (API tokens, SSH keys, database passwords) are stored as files in `/etc/Wywy-Website-Control/secrets/` and mounted via Docker secrets:
+
+```yml
+secrets:
+  tunnel_token:
+    file: ${SECRETS_DIR}/cache/cloudflare_tunnel_token
+
+services:
+  cloudflared:
+    secrets:
+      - tunnel_token
+```
+
+The `SECRETS_DIR` variable is set in per-service env files.
+
+## Configuration
+
+Non-sensitive configuration is externalized to `/etc/Wywy-Website-Control/config/` and loaded via `--env-file` or mounted as volumes. Compose files reference config via environment variables — never hardcode paths or values.
+
+## Init Containers
+
+Database schema migrations run as a one-shot init container (`create_tables`) with `condition: service_completed_successfully` in `depends_on`. This ensures tables exist before the API starts.
+
+```yml
+services:
+  sync:
+    depends_on:
+      create_tables:
+        condition: service_completed_successfully
+```
+
+## Healthchecks
+
+Postgres services **MUST** define a healthcheck:
+
+```yml
+healthcheck:
+  test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+  interval: 5s
+  timeout: 5s
+  retries: 10
+```
+
+Other long-running services should define healthchecks appropriate to their protocol.
+
+## Multi-Stage Builds
+
+Use Docker multi-stage builds to keep production images small. The `sql-receptionist` Dockerfile is the reference pattern:
+
+| Stage       | Purpose                                                    |
+| ----------- | ---------------------------------------------------------- |
+| `fetcher`   | Downloads source dependencies                              |
+| `builder`   | Compiles libraries and the application                     |
+| `dev`       | Development target — includes valgrind, gdb, debug symbols |
+| `prod`      | Release target — stripped binary only                      |
+| `unit_test` | Test target — includes C test suite, run with valgrind     |
+
+Targets are selected via `docker compose` service build configuration:
+
+```yml
+services:
+  sql_receptionist:
+    build:
+      target: prod
+```
+
+## Networks
+
+Prod mode isolates services into named networks:
+
+```yml
+networks:
+  cloudflared:
+  postgres:
+    internal: true
+```
+
+Dev mode connects cache to master-database via an external network bridge:
+
+```yml
+networks:
+  default:
+    name: wywy_website_master_database-sql_receptionist
+    external: true
+```
+
+## Volumes
+
+Persistent data mounts to `/var/lib/Wywy-Website/<service>/`. Logs mount to `/var/log/Wywy-Website/<service>/`.
+
+```yml
+volumes:
+  pgdata:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/Wywy-Website/cache/postgres
+```
+
+## Purge
+
+The `purge.sh` script in each service repository destroys all images and volumes for that service:
+
+```bash
+docker compose -f docker/docker-compose.base.yml -f docker/docker-compose.prod.yml down --rmi all --volumes
+```
+
+The `docker/purge.sh` inside Wywy-Website exists as a nuclear option for that repo only.

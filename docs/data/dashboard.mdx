@@ -1,0 +1,45 @@
+---
+title: Dashboard Configuration
+published: 2026-03-04T19:42:00+00:00
+lastmod: 2026-03-15T15:49:34+00:00
+---
+
+## Dashboard Configuration
+
+The dashboard can be configured per database. It is located under key "dashboard".
+
+The dashboard configuration is an array of dashboard components. The dashboard components appear from top to bottom, spanning the entire width of the screen.
+
+The base shape for every dashboard component is:
+
+```
+name: string
+type: string
+metrics: Array<string>
+function?: string
+function args?: Array<string>
+selector?: string
+selector args?: Array<string>
+```
+
+Some dashboard component types have additional optional options.
+
+### Data pre-transformations
+
+Some dashboard components expect data to come in a certain shape.
+
+This function defaults to the identity function.
+
+### Selector Functions
+
+Some data transformations expect data to come in a certain shape. The selector function is applied before the data transformation function and is conventionally used to select which data to transform and use.
+
+This function defaults to the identity function.
+
+## Dashboard Components
+
+These charts are available as dashboard components:
+
+- Gauge chart
+- Waterfall chart
+- Tree map

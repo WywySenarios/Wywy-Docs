@@ -1,0 +1,16 @@
+---
+title: unit-test (master-database C)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Runs C unit tests with valgrind for sql-receptionist (test mode only).
+
+## Dockerfile
+
+Built from `apps/sql-receptionist/Dockerfile` target `unit_test`. Copies both `apps/sql-receptionist/` and `apps/unit_tests/` — `unit_tests/src/main.c` overwrites `sql-receptionist/src/main.c` at COPY time, so the test binary uses the unit test entry point with all sqlr source files.
+
+## Docker Compose
+
+Test-only in `docker-compose.test.yml`. Depends on `postgres` (healthy). Command: `make clean && make && exec valgrind --leak-check=yes --show-leak-kinds=definite ./app`.

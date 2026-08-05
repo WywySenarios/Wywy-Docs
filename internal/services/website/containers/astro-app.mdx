@@ -1,0 +1,30 @@
+---
+title: astro-app
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Astro 5 frontend served via Cloudflare Worker.
+
+## Dockerfiles
+
+- Prod: `apps/astro-app/Dockerfile` — single `runtime` stage from `node:lts`. Entrypoint handled by `apps/astro-app/entrypoint.sh`.
+- Dev: `apps/astro-app/Dockerfile.dev` — same base, pre-installs npm deps, overrides entrypoint to `npm run dev -- --host`.
+
+## Docker Compose
+
+- Dev: `docker/docker-compose.dev.yml` — polling watchers, docs volume mount, `.env.dev` env files.
+- Prod: `docker/docker-compose.prod.yml` — Cloudflare API token secret, named node_modules volume, no dev env files.
+
+## Key differences
+
+| Aspect | Dev | Prod |
+|---|---|---|
+| Dockerfile | `Dockerfile.dev` | `Dockerfile` |
+| Entrypoint | `npm run dev -- --host` | `entrypoint.sh` (build + wrangler deploy) |
+| File watching | `CHOKIDAR_USEPOLLING=true` + `WATCHPACK_POLLING=true` | N/A |
+| node_modules | anonymous volume (host excluded) | named volume `astro-node_modules` |
+| Docs mount | `${DOCS_DIR}:/apps/astro-app/src/content/docs` | not mounted |
+| Cloudflare secret | not needed | `wywywebsite-astro-cloudflare` |
+| Env files | `.env` + `.env.dev` + `website/.*` | `.env` + `website/.env` |

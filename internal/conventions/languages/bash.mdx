@@ -1,0 +1,99 @@
+---
+title: Bash Scripting Conventions
+published: 2026-06-05T00:00:00
+---
+
+## Shebang
+
+Every script MUST start with `#!/bin/bash`.
+
+## Error handling
+
+Every script MUST use `set -euo pipefail` at the top unless a comment is given explaining why it cannot be used on that specific script.
+
+```bash
+#!/bin/bash
+set -euo pipefail
+```
+
+## Quoting
+
+Always quote variables (`"$var"`, not `$var`). Paths and strings that may contain spaces must be quoted. Positional arguments (`$@`, `$1`, etc.) should be quoted when passed to other commands.
+
+```bash
+echo "Service: $service_name"
+cp "$source_file" "$dest_dir/"
+bash "scripts/run/$service_name.sh" "$@"
+```
+
+There are exceptions in helper scripts that need to expand arguments — these require an inline comment explaining the lack of quoting.
+
+## Functions
+
+Use `function name() { ... }` syntax.
+
+```bash
+function check_service() {
+    local service_name="$1"
+    [[ -d "/usr/local/Wywy-Website/$service_name" ]] || return 1
+}
+```
+
+## Conditionals
+
+Use `[[ ]]` for test constructs (modern bash).
+
+```bash
+if [[ -z "$service_name" ]]; then
+    echo "Usage: $EXPECTED_FORMAT"
+    exit 1
+fi
+```
+
+Use `case` for environment dispatch:
+
+```bash
+case "$environment" in
+    prod) compose_files+=("-f" "docker/docker-compose.prod.yml") ;;
+    dev)  compose_files+=("-f" "docker/docker-compose.dev.yml") ;;
+esac
+```
+
+## Paths
+
+Scripts must be resilient against symlinks and independent of the caller's working directory. Always resolve the script's own location using `readlink -f`:
+
+```bash
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+```
+
+Use `SCRIPT_DIR` to reference sibling files (configs, templates, subdirectories). Do not rely on `$0`, relative paths from `$PWD`, or `cd "$(dirname ...)" && pwd` without symlink resolution.
+
+## Exit codes
+
+Return meaningful exit codes: `exit 0` for success, `exit 1` for expected errors.
+
+## Variable naming
+
+- UPPER_CASE for constants and environment-sourced values.
+- lower_case for local variables.
+
+```bash
+CONTROL_DIR="/etc/Wywy-Website-Control"
+service_name="cache"
+```
+
+## Comments
+
+Explain non-obvious commands. Keep comments concise and place them above the relevant block.
+
+```bash
+# shift args so that positional arguments make sense
+shift $((OPTIND - 1))
+```
+
+## Related tech stack
+
+| Tool   | Convention file                                                   |
+| ------ | ----------------------------------------------------------------- |
+| Docker | [`tech-stack/docker-images.mdx`](../tech-stack/docker-images.mdx) |

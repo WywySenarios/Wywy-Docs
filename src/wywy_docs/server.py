@@ -389,7 +389,9 @@ def main() -> None:
     parser.add_argument("--port", type=int)
     args, _ = parser.parse_known_args()
     global _ROOT_DIR
-    _ROOT_DIR = os.environ.get("WYWY_ROOT", os.getcwd())
+    _ROOT_DIR = os.environ.get(
+        "WYWY_DOCS_DIR", os.environ.get("WYWY_ROOT", os.getcwd())
+    )
     _ensure_index(_ROOT_DIR)
     port = args.port if args.port is not None else int(os.environ.get("PORT", "2530"))
     mcp.settings.port = port

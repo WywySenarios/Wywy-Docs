@@ -1,0 +1,128 @@
+---
+title: Django Conventions
+published: 2026-06-05T00:00:00
+---
+
+> **Language:** Python — see [`languages/python.mdx`](../languages/python.mdx).
+
+## Django version
+
+Django 6.0.
+
+## Project structure
+
+A single Django project with `apps/` for each Django app.
+
+```
+Wywy-Website-Cache/
+  manage.py
+  sync/                    # Django project
+    settings.py
+    urls.py
+    wsgi.py
+    apps/
+      main/                # Django app
+        urls.py
+        views.py
+        models.py
+      auth/
+        urls.py
+        views.py
+        middleware.py
+        sessions.py
+```
+
+## Settings
+
+A single `settings.py` file. Environment-specific behaviour is controlled via environment variables (e.g., `DEV` boolean), not by splitting into `base.py`/`dev.py`/`prod.py`.
+
+```python
+DEV: bool = environ.get("DEV", "false").lower() == "true"
+
+CSRF_COOKIE_SECURE = not DEV
+SESSION_COOKIE_SECURE = not DEV
+```
+
+Secrets are read from environment variables or Docker secrets files — never hardcoded.
+
+## URL routing
+
+Use `path()` exclusively (no `re_path` or `url()`). Use `include()` for app-level routing.
+
+```python
+urlpatterns: list[URLPattern | URLResolver] = [
+    path("auth/", include("auth.urls")),
+    path("main/", include("main.urls")),
+]
+```
+
+@TODO: Set `app_name` in every `urls.py`.
+
+## Views
+
+Function-based views are the current pattern. Views return explicit `HttpResponse` subtypes.
+
+**Cache service:** Views serve both HTML templates (admin) and JSON responses (API).
+
+**Agentic pipeline:** Views are API-only — all responses are JSON (`JsonResponse` or DRF `Response`). No templates are used. The Astro frontend handles all UI rendering.
+
+```python
+from django.http import HttpResponseBadRequest, JsonResponse
+
+def login(request: HttpRequest) -> HttpResponse:
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    ...
+    return JsonResponse({"status": "ok"})
+```
+
+Manual request handling: check content type, parse JSON body, validate inline. Views call psycopg directly for data operations.
+
+## Authentication
+
+Custom token-based auth via `auth.middleware.AuthMiddleware`. Tokens are `<id>.<secret>` format stored in `info.sessions`. The built-in Django auth system (`django.contrib.auth`) is not used for API endpoints.
+
+Admin credentials are read from `/run/secrets/admin` (Docker secret).
+
+## Database access
+
+Raw SQL via `psycopg` — no Django ORM is used for application data. Use `with psycopg.connect(...) as conn:` for connection management.
+
+```python
+with psycopg.connect(conninfo) as data_conn:
+    with data_conn.cursor() as cur:
+        cur.execute("SELECT * FROM ...", params)
+        rows = cur.fetchall()
+```
+
+## Models
+
+Django models are currently stubs (empty `models.py` files). When models are introduced:
+- Use `UUIDField` for primary keys.
+- Include `created_at` and `updated_at` on every model.
+- Use `class Meta` with `ordering` and `verbose_name`.
+
+Migrations: always commit migrations; never edit committed migrations.
+
+## REST framework
+
+Django REST Framework is not currently used. Code uses manual `json.loads()` and `JsonResponse`. DRF with `ModelSerializer` is a future plan.
+
+## Admin
+
+Register all models with `list_display`, `list_filter`, and `search_fields`.
+
+## Logging
+
+Configure Django's `LOGGING` dict to write to files under `/var/log/Wywy-Website/<service>/`.
+
+## Static files
+
+The cache service uses Django static files:
+
+```
+STATIC_ROOT = "/var/www/static/"
+STATIC_URL = "/static/"
+```
+
+The agentic pipeline does NOT use Django static files — the Astro frontend serves its own assets. No `STATIC_ROOT` or `STATIC_URL` configuration is needed in the agentic pipeline's Django settings.

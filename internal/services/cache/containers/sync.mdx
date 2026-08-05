@@ -1,0 +1,25 @@
+---
+title: sync
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Django HTTP API (port 8000) serving as the cache layer. Connects to cache Postgres and master-database sql-receptionist.
+
+## Dockerfile
+
+`apps/sync/Dockerfile` — `python:3.14.0-slim-bookworm`, non-root user `wywy` (GID 2523, UID from `USER_ID` arg). Default entrypoint: `python3 manage.py runserver 0.0.0.0:8000`.
+
+## Docker Compose
+
+- Base: defined in `docker-compose.base.yml` with `create_tables` + `database` as dependencies.
+- Dev: `DEV=TRUE`, joins `wywy_website_master_database-sql_receptionist` external network (to reach master DB).
+- Prod: `DEV=FALSE`, switches to `gunicorn sync.wsgi --bind 0.0.0.0:${SYNC_PORT}`.
+
+## Volumes
+
+- Source: `./../apps/sync:/apps/sync`
+- Config: `${UNIVERSAL_CONFIG_DIR}/config.yml:/home/wywy/config.yml`
+- Data: `/var/lib/Wywy-Website/cache:/var/lib/Wywy-Website/cache`
+- Logs: `/var/log/Wywy-Website/cache:/var/log/Wywy-Website/cache`

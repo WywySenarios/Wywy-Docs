@@ -1,0 +1,353 @@
+---
+title: Pipeline Statuses — valid values, transitions, and assignment rules
+published: 2026-06-17T00:00:00
+updated: 2026-06-18T00:00:00
+---
+
+## Valid status values
+
+### Pipeline status (DB column `Pipeline.status`)
+
+| Status | Terminal? | Meaning |
+|--------|-----------|---------|
+| `"queued"` | No | Pipeline created, awaiting orchestrator |
+| `"running"` | No | Pipeline actively executing stages |
+| `"completed"` | **Yes** | All stages finished successfully |
+| `"failed"` | **Yes** | Unrecoverable failure |
+| `"cancelled"` | **Yes** | User-requested abort |
+
+### Stage status (DB column `PipelineStage.status`)
+
+| Status | Terminal? | Meaning |
+|--------|-----------|---------|
+| `"pending"` | No | Initial state; also set when a retry is scheduled with backoff |
+| `"running"` | No | Stage is executing in an agent container |
+| `"completed"` | **Yes** | Agent finished successfully, state validated |
+| `"failed"` | **Yes** | Agent exited with error or validation failed |
+| `"blocked"` | **Yes** | Stage needs user input to continue |
+
+### All valid statuses
+
+Defined in two places — keep them in sync:
+
+| File | Line | Constant |
+|------|------|----------|
+| `apps/orchestrator/orchestrator.py` | 109 | `TERMINAL_STATUSES = {"failed", "cancelled", "completed"}` |
+| `apps/orchestrator/orchestrator.py` | 110 | `NON_TERMINAL_STATUSES = {"queued", "running"}` |
+| `apps/orchestrator/state/models.py` | 15 | `VALID_STATUSES = {"pending", "queued", "running", "blocked", "completed", "failed", "cancelled"}` |
+| `apps/orchestrator/state/models.py` | 26 | `TERMINAL_STATUSES = {"completed", "failed", "cancelled"}` |
+
+## Transition diagram
+
+### Pipeline status
+
+```
+                    orchestrator_loop()          advance_pipeline()
+                    _transition to "running"     _complete_pipeline()
+                         │                              │
+    views.py             ▼                              ▼
+  POST /api/pipelines/ ┌──────────┐             ┌───────────┐
+  status="queued" ────→│  queued  │             │ completed │
+                       └──────────┘             └───────────┘
+                            │                        ▲
+                            │ _transition to          │ (max retries
+                            │ "running"               │  exceeded)
+                            ▼                        │
+                       ┌──────────┐    ┌──────────┐──┘
+                       │ running  │───→│  failed  │
+                       └──────────┘    └──────────┘
+                            │               ▲
+                            │               │ (stage failure,
+                            │               │  abort consumed)
+                            ▼               │
+                       ┌───────────┐         │
+                       │ cancelled │─────────┘
+                       └───────────┘
+```
+
+### Stage status
+
+```
+                    _run_stage()  ←  validated by _validate_stage_advancement
+                         │
+    _create_stages()     ▼
+  status="pending" ──→ running
+       ▲                  │
+       │                  ├── exit 0 + valid    → completed
+       │                  ├── exit 0 + invalid   → failed
+       │                  ├── blocked=True       → blocked
+       │                  └── exit != 0
+       │                       │
+       │                       ├── retries left  → pending (backoff)
+       │                       └── no retries    → failed
+       │
+       └── (retry_after expires, orchestrator loop re-enters advance_pipeline)
+```
+
+## Assignment rules — pipeline status
+
+### 1. `"queued"` — creation only
+
+| Location | Line | Context |
+|----------|------|---------|
+| `apps/orchestrator/models.py` | 13 | Django field `default="queued"` — any `Pipeline()` without explicit status |
+| `apps/orchestrator/views.py` | 62 | `api_pipelines()` POST handler: `Pipeline.objects.create(..., status="queued")` |
+
+**Rule:** Only the API view may create a pipeline with `"queued"`. No code path ever transitions a non-queued pipeline back to `"queued"`.
+
+### 2. `"running"` — orchestrator assumes ownership
+
+| Location | Line | Context |
+|----------|------|---------|
+| `apps/orchestrator/orchestrator.py` | 166 | `orchestrator_loop()`: pulls the longest-waiting `"queued"` pipeline, transitions to `"running"` via `_transition_pipeline_state()` |
+
+**Rule:** Only `orchestrator_loop()` (line 166) may set `"running"`. This happens **inside** `transaction.atomic()` with `select_for_update()` on the queued row. The status change is committed before `_execute_pipeline()` begins — this creates the window for the dual-orchestrator race (see [Race conditions](#race-conditions) below).
+
+### 3. `"failed"` — six paths, all through `_transition_pipeline_state`
+
+All pipeline `"failed"` transitions now route through `_transition_pipeline_state()`. The previous direct-assignment exception (the `DoesNotExist` handler) was fixed by adding an `error_message` parameter to `_transition_pipeline_state`.
+
+| Location | Line | Context |
+|----------|------|---------|
+| `apps/orchestrator/orchestrator.py` | 213 | `_reap_orphaned_pipelines()`: any `"running"` pipeline found at orchestrator thread start was orphaned by a previous crash |
+| `apps/orchestrator/orchestrator.py` | 242 | `_execute_pipeline()` except block: workspace creation, server start, or `_create_stages()` raised |
+| `apps/orchestrator/orchestrator.py` | 431 | `advance_pipeline()`: `PipelineStage.DoesNotExist` — the expected stage row is missing (now uses `_transition_pipeline_state(pipeline, "failed", error_message=...)`) |
+| `apps/orchestrator/orchestrator.py` | 508 | `_run_stage()` except block: init stage workspace/server setup raised |
+| `apps/orchestrator/orchestrator.py` | 672 | `_handle_stage_failure()`: `stage.retry_count > PIPELINE_MAX_RETRIES` |
+
+**Rules:**
+
+- **Always** use `_transition_pipeline_state(pipeline, "failed")`. No code path directly assigns `pipeline.status = "failed"` anymore (the last one was at the old line 343, now replaced by the `error_message` parameter flow).
+- `_reap_orphaned_pipelines` also sets all `"running"` stages to `"failed"` at line 214.
+
+### 4. `"completed"` — one path
+
+| Location | Line | Context |
+|----------|------|---------|
+| `apps/orchestrator/orchestrator.py` | 702 | `_complete_pipeline()`: called from `advance_pipeline()` when the current stage is the last in `STAGE_ORDER` and the next index would be out of range |
+
+**Rule:** Only reaches here after all stages have been processed. `_complete_pipeline()` also creates the PR, stops the opencode server, and tears down the workspace.
+
+### 5. `"cancelled"` — two paths
+
+| Location | Line | Context |
+|----------|------|---------|
+| `apps/orchestrator/orchestrator.py` | 159 | `orchestrator_loop()`: an abort was queued for this pipeline before it started executing |
+| `apps/orchestrator/orchestrator.py` | 652 | `_handle_stage_failure()`: Guard 1 — an abort message was consumed during stage failure handling (this is the normal abort path for actively running pipelines) |
+
+**Rule:** `abort_pipeline()` (line 1287) never touches `pipeline.status` directly. It puts the pipeline ID on `_abort_queue` and signals the orchestrator. The orchestrator thread consumes the queue and calls `_transition_pipeline_state(pipeline, "cancelled")`.
+
+## The `_validate_stage_advancement` helper
+
+**Defined at:** `orchestrator.py:329-457`
+
+```python
+def _validate_stage_advancement(
+    pipeline: Pipeline,
+    stage: Optional[PipelineStage],
+    *,
+    force: bool = False,
+    expected_initial_stage: Optional[str] = None,
+) -> None:
+```
+
+This is the single gateway for validating that a stage advancement is legal.
+It checks seven preconditions (in order, short-circuits on first hit):
+
+| # | Guard | Error type | Error message |
+|---|-------|------------|---------------|
+| 1 | `pipeline.status != "running"` | `PipelineNotRunningError` | `"... must be 'running'"` |
+| 2 | `stage is None` | `MissingInitialStageError` (if `expected_initial_stage` set) or `StageNotFoundError` | `"... no stage rows exist yet"` |
+| 3 | `expected_initial_stage is None and pipeline.current_stage is None` | `StageAdvancementError` (base) | `"expected_initial_stage is required when current_stage is None"` |
+| 4a | `expected_initial_stage is not None and current_stage is None and stage.name != expected_initial_stage` | `MissingInitialStageError` | `"... expected initial stage '...', got '...'"` |
+| 4b | `expected_initial_stage is not None and current_stage == expected_initial_stage and stage.name != expected_initial_stage` | `InitialStageAdvancementError` | `"Cannot advance from initial stage '...' to '...'"` |
+| 5 | `stage.status == "completed"` | `StageAlreadyTerminalError` | `"... stage is already completed"` |
+| 6 | `stage.status == "failed"` | `StageAlreadyTerminalError` | `"... stage is already failed"` |
+| 7 | `stage.name not in STAGE_ORDER` | `StageNotInOrderError` | `"... is not in STAGE_ORDER"` |
+
+All exceptions inherit from `StageAdvancementError` (defined in `apps/orchestrator/exceptions.py`). Call sites catch the base type for generic handling.
+
+### Call sites
+
+| Calling function | Line | Behaviour when helper raises `StageAdvancementError` |
+|-----------------|------|------------------------------------------------------|
+| `advance_pipeline()` | 527-532 | Catches, logs `WARN`, returns gracefully |
+| `_run_stage()` | 588-595 | Catches, logs `ERROR`, calls `_handle_stage_failure()`, returns |
+
+Both call sites catch the base `StageAdvancementError` — the helper never crashes the orchestrator loop.
+
+### The `force` parameter
+
+**Must not be used** without consulting project maintainers. `force=True` bypasses
+all validation and can corrupt pipeline state by:
+
+- Allowing stage execution on a non-`"running"` pipeline
+- Re-executing an already-terminal stage
+- Operating on a stage whose name is not in `STAGE_ORDER`
+
+No production code currently passes `force=True`. The parameter exists for
+future use only and is exercised by a single test
+(`test_force_true_bypasses_pipeline_status_check`) to prevent bit-rot.
+
+## The `_transition_pipeline_state` function
+
+**Defined at:** `orchestrator.py:598-627`
+
+```python
+def _transition_pipeline_state(
+    pipeline: Pipeline,
+    target_status: str,
+    *,
+    revive: bool = False,
+    error_message: str = "",
+) -> None:
+```
+
+This is the **only** function that assigns `pipeline.status`. It:
+
+1. Refreshes the pipeline from DB to detect cross-thread status changes (line 607)
+2. Guards against reviving terminal pipelines without `revive=True` (lines 608-617)
+3. Sets `pipeline.status = target_status` (line 632)
+4. If `error_message` is non-empty, saves it together with status in a single `save()` call
+
+### The terminal-status guard
+
+```python
+# orchestrator.py:608-617
+pipeline.refresh_from_db(fields=["status"])
+if (
+    pipeline.status in TERMINAL_STATUSES       # {"failed","cancelled","completed"}
+    and target_status in NON_TERMINAL_STATUSES # {"queued","running"}
+    and not revive
+):
+    raise RuntimeError(...)
+```
+
+This prevents reviving a dead pipeline back to `"queued"` or `"running"` unless
+`revive=True` is explicitly passed. Default is `revive=False`. No code path
+currently passes `revive=True`.
+
+### The `error_message` parameter
+
+Added to eliminate the last direct `pipeline.status` assignment outside
+`_transition_pipeline_state`. The `DoesNotExist` handler in `advance_pipeline()`
+(line 431) now passes the error message through the function instead of doing
+a manual `pipeline.status = "failed"` + `pipeline.error_message = "..."` +
+`pipeline.save(...)` triple.
+
+## Stage status transitions
+
+### `"pending"` → `"running"`
+
+```
+orchestrator.py:483 (_run_stage — after validation at line 469-470)
+```
+
+Set in `_run_stage()` when a stage begins execution. This is the primary
+advancement action — it is always preceded by `_validate_stage_advancement()`
+(either from `advance_pipeline()` line 441 or from `_run_stage()` line 469).
+
+### `"pending"` at creation time
+
+```
+orchestrator.py:922-925 (_create_stages)
+```
+
+`PipelineStage.objects.create(..., name=name)` — the model default
+(`models.py:41`) sets `status="pending"`.
+
+### `"running"` → `"completed"`
+
+```
+orchestrator.py:277 (_try_recover_retry — retry recovery from state.json)
+orchestrator.py:673 (_run_stage — agent exit code 0 + valid state, for non-init stages)
+```
+
+Most stages transition to `"completed"` when the agent exits successfully and
+state validation passes. The init stage is the exception (see below).
+
+### `"running"` → `"pending"` (init stage only)
+
+```
+orchestrator.py:670-671 (_run_stage — init agent exit code 0 + valid state)
+```
+
+The init stage is a **setup barrier**. After its agent completes successfully,
+the stage status is set to `"pending"` instead of `"completed"` so that the
+normal advancement guard in `advance_pipeline()` (line 492: `current_obj.status
+not in ("completed", "blocked")`) blocks any attempt to advance FROM init.
+The transition from init to the next stage (RED) is handled directly by
+`_execute_pipeline()` (line 271-289), not through the normal advancement chain.
+
+### `"running"` → `"blocked"`
+
+```
+orchestrator.py:285 (_try_recover_retry — retry recovery from state.json)
+orchestrator.py:533 (_run_stage — agent returned blocked=True)
+```
+
+When a stage blocks, `pipeline.user_input_pending` is also set to `True` (line 534 / line 289).
+
+### `"running"` → `"failed"`
+
+Multiple paths:
+- `_handle_stage_failure()`: lines 649 (abort consumed), 663 (pipeline already terminal), 669 (max retries)
+- `_run_stage()`: line 506 (init stage setup failure), 557 (state validation failed)
+
+### `"running"` → `"pending"` (retry with backoff)
+
+```
+orchestrator.py:686
+```
+
+Set in `_handle_stage_failure()` when `retry_count <= PIPELINE_MAX_RETRIES`. A `retry_after` timestamp is set and the orchestrator loop will skip this stage until the timestamp passes.
+
+### `"pending"` → `"running"` (retry re-entry)
+
+The orchestrator loop re-enters `advance_pipeline()`, which finds the stage with `retry_after` in the past, checks state.json via `_try_recover_retry()`, and calls `_run_stage()` which sets `"running"` (line 483).
+
+## Race conditions
+
+### Dual-orchestrator race
+
+**Root cause:** `orchestrator_loop()` transitions a pipeline from `"queued"` → `"running"` inside a `transaction.atomic()` block (line 166). The row lock is released at line 168, but `_create_stages()` (line 240) runs much later — after workspace creation (line 237), server start (line 238), and health polling (line 239), which take ~25 seconds. A second orchestrator thread (from another Gunicorn worker — `Dockerfile:68` `--workers 2`) can find the `"running"` pipeline, call `advance_pipeline()` (line 170), and hit the `DoesNotExist` handler at line 424 before the first orchestrator has created any stage rows.
+
+**Race window:** Between line 166 (pipeline set to `"running"`) and line 240 (`_create_stages()`). During this window, `pipeline.status == "running"` but `pipeline.stages.count() == 0`.
+
+**Current mitigation (partial):** `_validate_stage_advancement()` is called in `advance_pipeline()` at line 441. If the helper were reached, it would catch the `stage is None` case (check #2). However, the helper is placed **after** the `DoesNotExist` handler at lines 424-440 — the `pipeline.stages.get(name=next_stage_name)` call at line 423 raises `DoesNotExist` first, and the handler fails the pipeline before the helper is ever invoked.
+
+**Not yet fixed:** A guard is needed **before** line 422 to detect `pipeline.stages.count() == 0` and return gracefully. The `_validate_stage_advancement` helper correctly identifies this as illegal advancement, but its call site in `advance_pipeline()` needs to be moved before the `try/except PipelineStage.DoesNotExist` block, or a separate zero-stage guard must be inserted.
+
+### Abort race
+
+The `_abort_queue` and `_wake_event` pattern ensures the WSGI thread never touches pipeline state directly. The orchestrator thread consumes abort messages at two well-defined points: before starting (`orchestrator_loop()` line 158) and during stage failure (`_handle_stage_failure()` line 649). This avoids races between the API thread and the orchestrator thread.
+
+## State.json correspondence
+
+The on-disk `state.json` file mirrors pipeline and stage statuses. It is written by:
+
+- `_init_state_file()` (line 837): initial `"status": "running"` for pipeline, `"pending"` for all stages
+- The agent container (via `_run_stage_via_server()` lines 1096–1119): agent writes terminal stage status (`"completed"`, `"blocked"`, or `"failed"`)
+- `_write_state_field()`: updates specific fields like `current_stage`
+
+The `_try_recover_retry()` function reads `state.json` to detect out-of-band status changes written by the agent between orchestrator ticks. This is the mechanism that bridges the gap between async agent execution and the polling orchestrator loop.
+
+## Testing conventions
+
+All test files that assert on pipeline or stage status:
+
+| File | Status values used |
+|------|--------------------|
+| `tests/conftest.py` | `queued`, `running`, `running` (awaiting input), `completed`, `failed`, `cancelled` |
+| `tests/test_advance.py` | `failed`, `running`, `completed`, `pending`, `cancelled` (+ `StageAdvancementError` exception hierarchy checks) |
+| `tests/test_agent_invocation.py` | `pending`, `running`, `completed` |
+| `tests/test_hello_world.py` | `queued`, `running`, `completed`, `pending` |
+| `tests/test_init_stage.py` | `pending`, `running`, `failed` |
+| `tests/test_workspace.py` | `running`, `failed` |
+| `tests/test_opencode_server.py` | `queued`, `running`, `completed`, `blocked`, `pending`, `failed` |
+| `tests/test_views_pipelines.py` | `queued`, `running`, `completed`, `failed` |
+| `tests/test_views_abort.py` | `completed`, `failed`, `cancelled` |
+| `tests/test_models.py` | `queued`, `pending` |
+| `tests/test_serializers.py` | `queued`, `running`, `completed` |
+| `state/tests/test_models.py` | all 7 valid statuses |
+| `state/tests/test_state_manager.py` | all 7 plus invalid values |

@@ -1,0 +1,59 @@
+---
+title: TypeScript Conventions
+published: 2026-05-22T00:00:00
+---
+
+## TypeScript configuration
+
+- `verbatimModuleSyntax: true` — use `import type` for type-only imports.
+- No linter or CI configured. Prettier default formatter.
+
+## Type assertions
+
+Type assertions (`as`) are strongly discouraged. Any type error that requires a type assertion should be treated as a bug to be fixed at the source. If a type assertion is absolutely necessary, it MUST:
+
+1. Be preceded by a comment with the words `type assertion:` explaining why the assertion is correct and why the source type cannot be fixed.
+2. Be reported to the user with the justification when it is introduced.
+
+## The `any` type
+
+- The `any` type MUST NOT be used without warning the user. If `any` is necessary, it MUST be preceded by a comment explaining why, and you must also warn the user when introducing it.
+- Prefer contextual types over simple types. For example, use `z.infer<typeof entrySchema>` over `any`, even if they compute to the same result in practice.
+
+## Naming conventions
+
+### Info vs Schema
+
+- `xxxInfo` = array-based (e.g. `DatabaseInfo.tables` is `Array<TableInfo>`, `TableInfo.descriptors` is `Array<DescriptorInfo>`, `TableInfo.schema` is `Array<DataColumn>`)
+- `xxxSchema` = column definition arrays (e.g. `getZodDatasetType()` returns a Zod object — the dictionary/validation equivalent)
+- Anything inside `xxxInfo` is human-readable (camelCase, spaces, etc.) — use `toSnakeCase()` before sending over the wire
+
+### lower_snake_case rule
+
+All database names, table names, and column names sent to API endpoints MUST be `lower_snake_case`. The config schema may use human-readable names (camelCase, spaces, etc.), so use `toSnakeCase()` from `@utils/parse` before:
+
+- Constructing API URL paths (e.g. `CACHE_URL/main/{db}/{table}/tag_names`)
+- Building JSON keys for API request bodies
+- Passing names to hooks that construct endpoints (`useDataset`, etc.)
+
+Data received from API responses, URL path segments, and query strings is assumed to already be `lower_snake_case` — do NOT re-convert or validate. Treat a missed conversion as a bug.
+
+Exceptions must be documented with an inline comment: `// lower_snake_case exception:`
+
+Example:
+
+```ts
+import { toSnakeCase } from "@utils/parse";
+
+const endpoint = `${CACHE_URL}/main/${toSnakeCase(databaseName)}/${toSnakeCase(tableName)}/tag_names`;
+```
+
+## Related tech stack
+
+The following tech-stack conventions apply to TypeScript code:
+
+| Framework | Convention file |
+|-----------|----------------|
+| Astro     | [`tech-stack/astro.mdx`](../tech-stack/astro.mdx) |
+| React     | [`tech-stack/react.mdx`](../tech-stack/react.mdx) |
+| Tailwind CSS | [`tech-stack/tailwind.mdx`](../tech-stack/tailwind.mdx) |

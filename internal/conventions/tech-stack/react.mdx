@@ -1,0 +1,109 @@
+---
+title: React Conventions
+published: 2026-06-05T00:00:00
+---
+
+> **Language:** TypeScript — see [`languages/typescript.mdx`](../languages/typescript.mdx).
+
+## Framework
+
+React 19, used as Astro islands (see [`astro.mdx`](./astro.mdx)).
+
+## Component naming
+
+- Domain components: PascalCase `.tsx` (e.g., `NavDrawer.tsx`, `SettingsForm.tsx`).
+- shadcn/ui primitives: kebab-case `.tsx` (e.g., `button.tsx`, `scroll-area.tsx`).
+
+## Component preference
+
+Use **shadcn/ui** components by default for all UI elements. Do not hand-roll custom components when a shadcn/ui primitive already exists — consistency across the codebase is more important than minor customisation.
+
+**Exception:** Charts — use `echarts` (see [Charting](#charting) below). Do not use shadcn/ui chart blocks.
+
+## shadcn/ui
+
+shadcn/ui components live in `src/components/ui/` and are styled via the `cn()` utility (`src/lib/utils.ts`).
+
+### Styling per project
+
+| Repo / service | shadcn/ui style |
+|----------------|-----------------|
+| Website        | `new-york`      |
+
+### Installation — IMPORTANT
+
+ShadCN components MUST be added using `npx shadcn@latest add <component-name>` from the project root.  
+**Never** copy component source from:
+- `shadcn/ui` documentation examples
+- Your training memory / knowledge base
+- The internet (blog posts, GitHub gists, etc.)
+- Other projects in this monorepo
+
+Using `npx` ensures the component is correctly patched for the project's style (`new-york` vs `default`), Tailwind version, and dependency tree. Copying from memory or external sources will almost certainly produce a component that does not match the project's styling configuration.
+
+```sh
+# ✅ CORRECT — install via npx
+npx shadcn@latest add button dialog command
+```
+
+```sh
+# ❌ WRONG — do not copy source manually
+```
+
+When a parent component is already hydrated (has `client:load` or `client:only="react"`), use shadcn/ui as children — do not add a second client directive on the shadcn component itself.
+
+```tsx
+// GOOD: shadcn as child of a hydrated component
+<DashboardCard client:load>
+    <Button>Save</Button>
+    <Dialog>...</Dialog>
+</DashboardCard>
+```
+
+## Hooks
+
+Hook names MUST begin with `use`. Custom hooks are permitted.
+
+```tsx
+function useAutoPopulate() { ... }
+function useDataset() { ... }
+```
+
+## Form patterns
+
+Use `react-hook-form` with `zod` for form validation:
+
+```tsx
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+```
+
+## Charting
+
+- `echarts` is the preferred charting library.
+- `recharts` MUST NOT be used for new code.
+
+## Notifications
+
+Use `sonner` for toast notifications:
+
+```tsx
+import { Toaster } from "@/components/ui/sonner";
+```
+
+## Icons
+
+Use `lucide-react` for iconography.
+
+## Theme
+
+Use `next-themes` for dark/light mode management.
+
+## Command palette
+
+Use `cmdk` via the `Command` shadcn component.
+
+## State management
+
+No global state library is used. Prefer local component state (`useState`, `useReducer`) and React Context for shared state within a subtree.

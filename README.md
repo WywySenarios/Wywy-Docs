@@ -1,5 +1,11 @@
 # Wywy-Docs
 
+## MCP service configuration
+
+Set `WYWY_DOCS_DIR` to this checkout before running `scripts/install-service.sh`.
+The service stores that path in `~/.config/wywy-docs-mcp/environment` and uses it
+as the documentation root.
+
 ## MCP tools
 
 ### delete_doc

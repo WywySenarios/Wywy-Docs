@@ -1,0 +1,52 @@
+---
+title: Serialization for Database API
+published: 2026-04-09T14:41:55+00:00
+---
+
+# Serialization (Out-bound Data)
+
+Data should be serialized to valid JSON.
+
+## Complete vs. Incomplete Data
+
+Complete data objects contain every required column and sub-column for the respective table.
+
+Incomplete data objects do not need every required and sub-column for the respective table.
+
+No erroneous columns or sub-columns should ever be passed in. Any server that receives an erroneous column should respond with an error (e.g. HTTP 400).
+
+## JSON Keys
+
+@TODO complete migration
+
+Every JSON key should be in lower_snake_case. This includes constants keys (e.g. "data", "descriptors"). Eventually the API will no longer accept "pretty" keys.
+
+Developer note: Use toSnakeCase or to_lower_snake_case helper to convert column names into a valid object key.
+
+## Entries
+
+A table entry is an entry whose schema relates to a table.
+
+A descriptor entry is an entry whose schema relates to a descriptor.
+
+## Full Entries
+
+A full entry contains:
+
+- `data`
+- `tags` if tagging is enabled
+- `descriptors` if the respective table has descriptors
+
+The tags supplied should be an array of numbers (i.e. tag_id). This array may be empty.
+
+The descriptors should be supplied in a JSON object with keys.
+
+## Potential Server-side Restrictions
+
+The maximum size of an INSERT query (i.e. after deserialization) is 65536 bytes. This maximum is not necessarily enforced everywhere.
+
+# De-serialization (In-bound Data)
+
+Data received should be valid JSON.
+
+@TODO

@@ -1,0 +1,14 @@
+---
+title: Functions
+published: 2026-03-05T23:34:13+00:00
+---
+
+## Schema defintion
+
+Functions are specified by string alias inside the configuration file. Function names are automatically converted to snake_case.
+
+If a function name is not valid/found, build or pre-flight checks should fail.
+
+Functions require an input and arguments. The attributes for the arguments might be optional (i.e. defaults to no arguments).
+
+From a technical implementation perspective, the arguments are passed in first and the input is passed in last.

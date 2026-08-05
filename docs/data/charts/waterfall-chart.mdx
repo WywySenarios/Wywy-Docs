@@ -1,0 +1,24 @@
+---
+title: Waterfall Chart
+published: 2026-03-15T16:43:28+00:00
+lastmod: 2026-03-22T20:49:58+00:00
+---
+
+## Waterfall Chart
+
+The waterfall chart takes in a vector for startValues (i.e. bar offsets), a vector for values, and a vector for labels.
+
+### Error Handling
+
+The waterfall fails unexpectedly when there is a vector size mismatch.
+
+### Options
+
+The waterfall chart can have an offset. This offset can be:
+
+- No offset (don't put the key in, or leave it as something random)
+- "initial" (the chart applies a transformation where all start values will be subtracted by the first value in the start value vector)
+
+The waterfall chart may invert axes (invertAxes) (opt-in).
+
+The waterfall chart can display different ECharts datatypes (datatype) (value, category, time, or log)

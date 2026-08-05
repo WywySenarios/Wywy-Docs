@@ -1,0 +1,33 @@
+---
+title: postgres (master-database)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+PostgreSQL 18 with PostGIS, WAL backup via SSH to backup server.
+
+## Dockerfile
+
+`apps/postgres/Dockerfile` — `postgres:18` base, adds `openssh-client` + `postgis`. Copies `apps/postgres/backup.sh` and `apps/postgres/entrypoint.sh`. Entrypoint script (`CMD`) is `/home/postgres/entrypoint.sh`.
+
+## Entrypoint
+
+`apps/postgres/entrypoint.sh` — prepares SSH keys from secrets (`ssh_private_key`, `ssh_backup_public_key`), initializes DB if empty, copies postgresql.conf + pg_hba.conf into PGDATA, starts postgres.
+
+## Backup Script
+
+`apps/postgres/backup.sh` — called by PostgreSQL WAL archiving. Sends WAL files to backup server via SCP over SSH.
+
+## Docker Compose
+
+Base config in `docker-compose.base.yml`: healthcheck, `shm_size: 128mb`, `extra_hosts` for `host.docker.internal`. Env from `.env` + `backup/.env` + `master-database/.env`. Secrets: `ssh_private_key`, `ssh_backup_public_key`.
+
+Dev overlays `.env.dev` variants. Test mode: `restart: no`, `PGDATA: /tmp/postgres`, dev PG config mounted.
+
+## Volumes
+
+- Data: `${DATA_DIR}/master-database/postgres:/var/lib/postgresql/data`
+- PG config: `${UNIVERSAL_CONFIG_DIR}/master-database/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro`
+- HBA: `${UNIVERSAL_CONFIG_DIR}/master-database/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro`
+- Logs: `/var/log/Wywy-Website/master-database:/var/log/Wywy-Website/master-database`

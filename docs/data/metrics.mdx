@@ -1,0 +1,91 @@
+---
+title: Metrics
+published: 2026-03-04T19:44:00+00:00
+lastmod: 2026-03-22T04:06:58+00:00
+---
+
+## What are metrics?
+
+Metrics are exported columns that can be displayed to the user or used in data analysis.
+
+### Properties of metrics
+
+- Metrics are a function of at least one column(s) in the _same_ table.
+- Metrics are N-dimensional vectors, where N is the number of rows in the dataset that is currently being analyzed.
+- Metrics are scoped per database.
+
+## Configuration
+
+Metrics can be configured per table/descriptor inside the main global configuration under the key "metrics". "metrics" should be an array of metrics to export.
+
+ID columns are automatically exported as "\[table name\]\_id" or "\[table name\]\_\[descriptor name\]\_id".
+
+Each metric to export should contain the name of the exported metric, the function to apply before export, the columns to pass into the function, and optionally the arguments to pass into the function.
+
+The function must return a vector with the same length as the number of rows inside the current dataset relating to the current table. The function defaults to the identity function (value does not change).
+
+The function should throw an error if the arguments are invalid (e.g. datatype or input vector lengths mismatch).
+
+The vector data should be supplied as an array of strings representing the database column names to pull. This array is validated during website build or pre-flight.
+
+You must manually declare the expected datatype of the output. Metrics will always be coerced to calculateable values (i.e. number, bigint, or string fields), but this declared datatype is what is used in interpretations afterwards.
+
+The (positional) arguments should be supplied as a potentially empty array.
+
+The general shape of a single metric is:
+
+```
+name: string
+function?: string
+data: Array<string>
+args?: Array<string>
+```
+
+Here are two examples of metrics:
+
+```
+metrics:
+  - name: Qualitative Time Efficiency
+    data: [Time Efficiency]
+    args: []
+```
+
+```
+metrics:
+  - name: Duration
+    datatype: Date
+    function: subtraction
+    data: [End Time, Start Time]
+```
+
+Datatype checking may or may not be detected or reported. Please consult the documentation for the specific function to find out.
+
+### Metric Naming
+
+Metrics are automatically converted to snake_case before equation parsing.
+
+Metric name collision is not detected or reported. It might cause undefined behavior.
+
+Metric names may not have the suffix of \_id, which is reserved for ID columns.
+
+Metric names may collide during equation parsing. Make sure:
+
+- No two metrics have the same name.
+- Metrics do not share names with mathematical or Wywy-Website data analysis functions.
+- Metrics do not share names with a runtime variable.
+
+Runtime variables include:
+
+- now: The current time as an integer, where the units digit represents a millisecond.
+
+Other reserved names include:
+
+- datasetMatrix: The datasetMatrix produced by the previous selection, transformation, or fetch.
+
+## Recommendations
+
+I recommend you use metrics to:
+
+- \Export individual columns of data.
+- Evaluate implied metrics (i.e. distance traveled, time elapsed)
+- Prevent repeated calculations.

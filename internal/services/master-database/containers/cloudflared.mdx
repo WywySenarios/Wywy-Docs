@@ -1,0 +1,20 @@
+---
+title: cloudflared (master-database)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Cloudflare Tunnel exposing sql-receptionist (prod only).
+
+## Dockerfile
+
+`apps/cloudflared/Dockerfile` — `debian:trixie-20230612` with `cloudflared` installed. Entrypoint: `apps/cloudflared/entrypoint.sh`.
+
+## Entrypoint
+
+Reads `TUNNEL_TOKEN` from `$TUNNEL_TOKEN_FILE` secret, runs `cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN"`. Same script as cache's cloudflared.
+
+## Docker Compose
+
+Prod-only in `docker-compose.prod.yml`. Uses `cloudflared_token` secret from `${SECRETS_DIR}/master-database/cloudflared-cloudflare-token.txt`. Network: `cloudflared`.

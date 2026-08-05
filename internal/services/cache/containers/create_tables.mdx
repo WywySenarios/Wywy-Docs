@@ -1,0 +1,21 @@
+---
+title: create_tables (cache)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Reads YAML config and creates databases/tables/columns/schemas in the cache Postgres. Runs once (init container, `condition: service_completed_successfully`).
+
+## Dockerfile
+
+`apps/create_tables/Dockerfile` — `python:3.14.0-slim-bookworm`, non-root user `create_tables`. Entrypoint: `python3 /home/create_tables/create_tables.py`.
+
+## Docker Compose
+
+Base config in `docker-compose.base.yml`. Dev mode adds Docker Watch on `apps/create_tables`. Requires `DATABASE_HOST/PORT/USERNAME/PASSWORD`, `SYNC_STATUS`, and `admin` secret.
+
+## Volumes
+
+- Config: `${UNIVERSAL_CONFIG_DIR}/config.yml:/home/create_tables/config.yml`
+- Logs: `/var/log/Wywy-Website/cache:/var/log/Wywy-Website/create_tables`
