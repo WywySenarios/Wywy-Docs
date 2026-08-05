@@ -1,0 +1,73 @@
+---
+title: Database Structure & Configuration
+published: 2026-05-13T22:33:28+00:00
+---
+
+# Terminology
+
+@TODO
+
+Entry: A table row.
+
+# Database Configuration
+
+@TODO
+
+# Table Configuration
+
+@TODO
+
+## Tagging Tables
+
+@TODO
+
+### Tags Table
+
+@TODO
+
+### Tag Names Table
+
+@TODO
+
+### Tag Aliases Table
+
+@TODO
+
+## Descriptor Configuration
+
+@TODO
+
+# Datatypes
+
+@TODO
+
+Datatypes are named in lowercase with spaces. (e.g. like this, not_like_this, Not Like This, Not like this, notLikeThis)
+
+## Sub Columns
+
+Sometimes the attributes of a piece of data cannot be represneted by a single Postgres column. In this case, one or more subcolumns will be created to represent the additional data. These subcolumns count towards the maximum column count for a table.
+
+@TODO
+
+## Pointer
+
+A pointer is a datatype that refers to an entry of another table within the same database. A pointer may only refer to one other type of table at a time.
+
+It is implemented as a foreign key dependency to the ID column of another table. The implementation theoretically allows for some entries to be permanently stuck inside the cache to sync, but this is OK since the cache is meant to be periodically cleaned.
+
+@TODO programmatically periodically clean cache
+
+Pointers may only reference tables that are above it inside the schema. Feel free to re-order your database schema.
+
+## Polymorphic Pointer
+
+A polymorphic pointer is a datatype that refers to any entry from another table within the same database.
+
+It is implemented as an INTEGER and a TEXT subcolumn representing the related table name. The current implementation does not guarentee the validity of the polymorphic relationship.
+
+Polymorphic pointers cannot point to tag_aliases subtables.
+
+Aliases of this datatype name include:
+
+- polymorphic pointer
+- polypointer

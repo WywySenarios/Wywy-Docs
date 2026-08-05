@@ -1,0 +1,66 @@
+---
+title: Shared Conventions (Language-Agnostic)
+published: 2026-05-22T00:00:00
+---
+
+## Function documentation
+
+### Functions \<=5 lines
+
+Make sure that the names of these functions are descriptive of their behaviour. If this is not sufficient, refer to [the normal function proceedure](#normal-functions)
+
+Inform the user if you change an existing function name.
+
+### Normal Functions
+
+Every exported/public function MUST have a documentation comment in the language's native format immediately above its definition:
+
+- TypeScript: JSDoc (`/** ... */`)
+- Python: docstring (`"""..."""`)
+- C: Javadoc-style (`/** ... */`) or single-line (`//`)
+- Bash: single-line comment (`#`) above the function
+
+Every non-exported/private function MUST have at least a single-line comment above its definition. This applies to all functions directly related to code being edited.
+
+When you encounter an undocumented function during an edit, add a comment and warn the user. After editing a function, update its documentation if the function's observable behaviour (return value, params, side effects) has changed.
+
+### Thread safety annotations
+
+Every function that **may be called in a multithreaded context** or **reads or mutates a shared resource** MUST have a thread-safety comment above its definition (within or adjacent to the documentation comment). The comment must declare one of:
+
+- **`Thread-safe`** — safe to call from any thread without external locking
+- **`Not thread-safe`** — must not be called from multiple threads, or caller must provide external synchronization
+- **`Thread-safe (atomic)`** — safe without locks because the operation is inherently atomic (e.g., a single word-sized store on supported architectures)
+- **`Thread-safe (locked: &lt;mutex/doc ref&gt;)`** — safe because the function acquires a specific lock internally; name the lock
+
+This applies to all languages. Examples:
+
+```typescript
+// Thread-safe
+function incrementCounter(): void { ... }
+```
+
+```python
+# Not thread-safe — caller must hold cache_lock
+def update_cache(key: str, value: Any) -> None: ...
+```
+
+If a function is trivially thread-safe by construction (pure function, no shared state, no I/O), no annotation is required — the compiler/reader can infer it. When in doubt, annotate.
+
+## TODO awareness
+
+When you encounter a `@TODO` or `TODO` comment during an edit, report it to the user along with the file path and line number. Tell them what the TODO says so they can decide whether to address it now or defer. This applies to any `@TODO` / `TODO` encountered while reading or modifying files.
+
+## Convention awareness
+
+When you encounter code during an edit that violates a convention documented in this file, report it to the user along with the file path, line number, which convention is broken, and what should change. This applies to all conventions across all sections of this file, whether you are editing the violating code or merely reading/observing it. Do not proactively scan for violations outside the scope of your current work.
+
+## Type awareness (all languages)
+
+When you encounter an existing `any` type (TypeScript) or equivalent untyped pattern in another language during an edit, report it to the user along with the file path and line number. Tell them what it's used for so they can decide whether to address it now or defer.
+
+## Tech stack conventions
+
+Frameworks, tools, databases, and infrastructure conventions live in [`tech-stack/`](../tech-stack/). Each language file in `languages/` links to its associated tech-stack items (e.g. `python.mdx` → [`django.mdx`](../tech-stack/django.mdx)). When adding a new convention for a framework or tool, add it to `tech-stack/` and cross-reference it from the relevant language file.
+
+

@@ -1,0 +1,16 @@
+---
+title: Tailwind CSS Conventions
+published: 2026-05-22T00:00:00
+---
+
+> **Ecosystem:** TypeScript — see [`languages/typescript.mdx`](../languages/typescript.mdx).
+
+## Width units
+
+Use Tailwind `w-{n}` (rem-based) classes instead of fixed `px` widths for components that directly contain text, so they scale with root font size.
+
+## shadcn/ui
+
+- shadcn/ui components live in `src/components/ui/`, styled via `cn()` utility (`src/lib/utils.ts`).
+- Use new-york style (the project default).
+- Astro VS Code extension for `.astro` file support.

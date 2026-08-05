@@ -1,0 +1,134 @@
+---
+title: Python Conventions
+published: 2026-06-05T00:00:00
+---
+
+## Python version
+
+Use Python 3.12+. When creating a new Dockerfile, prefer the newest LTS. Existing images are already pinned and should not be changed unless a package requires it.
+
+| Service         | Base image                    |
+| --------------- | ----------------------------- |
+| Cache           | `python:3.14.0-slim-bookworm` |
+| Master-Database | `python:3.12-slim` (tests)    |
+
+## Type hints
+
+All function arguments MUST have type hints. Return types MUST be provided unless the function returns `None`/`void`, in which case the annotation is optional.
+
+```python
+def validate_session(token: str) -> tuple[bool, str]:
+    ...
+
+def connect() -> None:  # Optional: can omit `-> None`
+    ...
+```
+
+Always parameterize types when possible (e.g. `dict[str, Any]` instead of `dict`)
+
+## Docstrings
+
+Google-style docstrings for all public functions. Single-line docstring or comment for private helpers.
+
+```python
+def create_session(user_id: str, expiry: int) -> str:
+    """Create a new session token for the given user.
+
+    Args:
+        user_id: The user identifier.
+        expiry: Token lifetime in seconds.
+
+    Returns:
+        A session token string.
+
+    Raises:
+        ValueError: If user_id is empty.
+    """
+```
+
+## Imports
+
+Order: stdlib first, third-party second, local third. No wildcard imports.
+
+```python
+import json
+from pathlib import Path
+
+from django.http import HttpResponse, JsonResponse
+
+from sync.sync import enable_autosync
+```
+
+## Error handling
+
+Use explicit exception types. No bare `except:`.
+
+```python
+try:
+    data = json.loads(request.body)
+except json.JSONDecodeError:
+    return HttpResponseBadRequest("Invalid JSON")
+```
+
+## Testing
+
+- **unittest.TestCase** for Django app code and general Python tests.
+- Test method names MUST use `lower_snake_case` (e.g., `test_valid_credentials_return_200`).
+- Test files named `tests.py` inside Django apps or `test_*.py` in test directories.
+- Use `setUp()`/`tearDown()` for fixture setup; `self.subTest()` for parameterized tests.
+- `unittest.mock.MagicMock` and `@patch` for mocking.
+
+```python
+class TestSessionCreation(TestCase):
+    def setUp(self):
+        self.client = Client()
+
+    def test_valid_credentials_return_200(self):
+        response = self.client.post("/auth/login", ...)
+        self.assertEqual(response.status_code, 200)
+```
+
+## Async
+
+No async code is currently used. The codebase uses synchronous views and threads. This section is intentionally empty — add conventions when async is adopted.
+
+## Tooling
+
+### Type checking (pyright)
+
+Use **pyright** for static type checking. Install it via npm (it is a Node.js tool):
+
+```bash
+npm install -g pyright
+# or via npx (no install needed):
+npx pyright <file_or_directory>
+```
+
+### Environment setup
+
+Before running pyright (or working with Python code), ensure the project's dependencies are available:
+
+1. Install **uv** (fast Python package installer):
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   ```
+
+2. Create a virtual environment and install dependencies:
+   ```bash
+   cd apps/django
+   uv venv .venv
+   uv pip install -r requirements.txt
+   ```
+
+3. Run pyright pointing at the venv:
+   ```bash
+   npx pyright --pythonpath .venv/bin/python3 <file_or_directory>
+   ```
+
+Pyright must be run with `--pythonpath` pointing to the virtual environment's interpreter so it can resolve third-party imports (Django, DRF, etc.).
+
+## Related tech stack
+
+| Framework | Convention file |
+|-----------|----------------|
+| Django    | [`tech-stack/django.mdx`](../tech-stack/django.mdx) |

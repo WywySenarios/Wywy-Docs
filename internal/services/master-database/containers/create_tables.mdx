@@ -1,0 +1,21 @@
+---
+title: create_tables (master-database)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Reads YAML config and creates databases/tables/columns/schemas/auth tables/PostGIS in the master Postgres. Runs once (init container, `condition: service_completed_successfully`).
+
+## Dockerfile
+
+`apps/create_tables/Dockerfile` — `python:3.14.0-slim-bookworm`, non-root user `create_tables`. Entrypoint: `python3 /home/create_tables/create_tables.py`. Same Dockerfile as cache's create_tables.
+
+## Docker Compose
+
+Base config in `docker-compose.base.yml`. Dev adds Docker Watch + `.env.dev`. Test mode sets `SYNC_STATUS: true`. Requires `DATABASE_HOST/PORT/USERNAME/PASSWORD`, `SYNC_STATUS`, and `admin` secret.
+
+## Volumes
+
+- Config: `${UNIVERSAL_CONFIG_DIR}/config.yml:/home/create_tables/config.yml`
+- Logs: `/var/log/Wywy-Website/master-database:/var/log/Wywy-Website/create_tables`

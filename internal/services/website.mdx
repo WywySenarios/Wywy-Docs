@@ -1,0 +1,61 @@
+---
+title: Wywy-Website (Astro Frontend)
+published: 2026-05-22T00:00:00
+---
+
+## Commands (inside `/usr/local/Wywy-Website/Wywy-Website/apps/astro-app`)
+
+| What | Command |
+|---|---|
+| Dev | `npm run dev` (alias: `npm start`) |
+| Build (typecheck + build) | `npm run build` |
+| Wrangler preview | `npm run preview` |
+
+`npm run build` runs `astro check && astro build` — type-checking is part of the build step, not separate.
+
+No test files exist. Jest is listed in devDependencies but unused.
+
+## Architecture
+
+Single Docker service (`astro-app`): Astro 5 + Cloudflare adapter + React 19 + Tailwind CSS 4 + shadcn/ui (new-york style). Deployed as a Cloudflare Worker via wrangler.
+
+Source at `apps/astro-app/src/`. Entrypoints are `.astro` route pages in `src/pages/`.
+
+Connects to two sibling services: **sql-receptionist** (API at `DATABASE_URL`) and **cache** (at `CACHE_URL`).
+
+## Config YAML
+
+`/etc/Wywy-Website-Control/config/config.yml` mounted into container. Typed as `MainConfigSchema` in `src/env.d.ts:22-44`. Accessed via `import config from "@universal_root/config.yml"`.
+
+User-visible docs (MDX) at `/etc/Wywy-Website-Control/docs/`, mounted to `src/content/docs/` in dev.
+
+## Docker containers
+
+Single container `astro-app`. See [`containers/astro-app.mdx`](./website/containers/astro-app.mdx) for Dockerfile, compose config, entrypoint, ports, volumes, and dev/prod differences.
+
+## Path aliases (TypeScript)
+
+- `@/*` → `src/*`
+- `@utils/*` → `src/utils/*`
+- `@root/*` → app root (`apps/astro-app/`)
+- `@universal_root/*` → repo root (`../../*` — resolves to `/usr/local/Wywy-Website/Wywy-Website/`)
+
+## Content collections
+
+Defined in `src/content.config.ts`: docs (MDX), awards, projects, directives, blog, cards, privacyPolicies, schedules, wishlist, datasets (JSON). Most data loaded from `src/data/` subdirectories (gitignored — only `config.ts` tracked in git).
+
+## Schema Context
+
+Database and table schema information is provided via React context (`SchemaProvider` / hooks at `@utils/data/schema-context`). Components access schema data through these hooks instead of drilling `databaseName`/`tableName`/`tableInfo` as props.
+
+Accessor hooks (each consumes from a single shared context):
+- `useDatabaseName(): string`
+- `useDatabaseInfo(): DatabaseInfo`
+- `useTableName(): string | null` — `null` on dashboard
+- `useTableInfo(): TableInfo | null` — `null` on dashboard
+
+Provider `<SchemaProvider>` wraps the React subtree at the page level. Dashboard pages (part of the data system but table-scope-agnostic) omit table-level values. Table-scoped pages (data entry, explore, entries) populate both database and table info.
+
+Note: Descriptors are a list (`tableInfo.descriptors: DescriptorInfo[]`), not a single value — so there's no `useDescriptorInfo()` hook. Components that need a specific descriptor iterate the list themselves.
+
+@TODO implement @utils/data/schema-context.ts (SchemaProvider + useEffect hook)

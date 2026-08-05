@@ -39,12 +39,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY src/ src/
 
-# Repo-structure tests check for docs/ and internal/ symlinks.
-# Create them before uv sync so the package build can resolve them.
-RUN mkdir -p /etc/Wywy-Website-Control && \
-    ln -s /etc/Wywy-Website-Control/docs/ /app/docs && \
-    ln -s /etc/Wywy-Website-Control/internal/ /app/internal
-
 # Install project dependencies into .venv (locked).
 RUN uv sync
 

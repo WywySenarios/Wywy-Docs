@@ -1,0 +1,15 @@
+---
+title: C Conventions
+published: 2026-05-22T00:00:00
+---
+
+## Function documentation
+
+Every function declaration in `.h` files and every `inline`/`static` function in `.c` files must have a comment (Javadoc `/** ... */` or single-line `//`). Warn the user when encountering an undocumented function.
+
+After making an edit that changes function behaviour, always update the function's comment to match.
+
+## Build
+
+- Build with `make` (not direct compiler invocation).
+- Never leave build artifacts (`app/`, `obj/`) behind. Always run `make clean` after any local `make`.

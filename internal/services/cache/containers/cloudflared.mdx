@@ -1,0 +1,20 @@
+---
+title: cloudflared (cache)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Cloudflare Tunnel exposing the cache sync service (prod only).
+
+## Dockerfile
+
+`apps/cloudflared/Dockerfile` — `debian:trixie-20230612` with `cloudflared` installed. Entrypoint: `apps/cloudflared/entrypoint.sh`.
+
+## Entrypoint
+
+Reads `TUNNEL_TOKEN` from `$TUNNEL_TOKEN_FILE` secret (using the Docker secret → env pattern), runs `cloudflared tunnel --no-autoupdate run --token "$TUNNEL_TOKEN"`.
+
+## Docker Compose
+
+Prod-only in `docker-compose.prod.yml`. Uses `wywywebsite-cache-cloudflared-cloudflare` secret from `${SECRETS_DIR}/cache/cloudflared-cloudflare-token.txt`. Network: `cloudflared`.

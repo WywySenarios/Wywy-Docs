@@ -1,0 +1,23 @@
+---
+title: Selector Functions
+published: 2026-03-05T22:40:32+00:00
+---
+
+Selector functions are functions that modify an input matrix by selecting data of interest. The default selector function is the identity function, which does not modify the input matrix.
+
+The input matrix (dataset matrix) is assumed to have 1 independent column and an arbitrary (>=0) number of dependent columns. By convention, selector functions only return data that relates to the dependent columns. If you want to make the independent value to be returned, pass in the independent column twice to make a dependent version of it.
+
+## Selector types
+
+| Selector type   | Explaination                               |
+| :-------------- | :----------------------------------------- |
+| Row selector    | Return a single row of output as a vector. |
+| Matrix selector | Return a matrix of output.                 |
+
+## Step-wise Paradigm
+
+Generally speaking, most databases will follow the step-wise paradigm, where the dependent values will stay constant until the indepdent value changes.
+
+Example: If y=2 at 12:00PM and y=3 at 1:00PM are the only points inside of a dataset, then the x at 11:00AM is undefined, the x at 12:30PM is 2, and x after 1:00PM is 3.
+
+Although this might not be accurate in extraordinary cases, this assumption makes calculations much easier for the computer.

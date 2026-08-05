@@ -1,0 +1,26 @@
+---
+title: Wywy-Website-Cache
+published: 2026-05-22T00:00:00
+---
+
+## Docker Compose
+
+Compose project name: `cache`.
+
+Three compose files layered: `base` → `dev`/`prod`/`test`.
+
+| File | Role |
+|---|---|
+| `docker/docker-compose.base.yml` | Shared config for all environments |
+| `docker-compose.dev.yml` | Dev overrides: watch mode, external network to master-database |
+| `docker-compose.prod.yml` | Prod overrides: cloudflared tunnel, gunicorn |
+| `docker-compose.test.yml` | Test overrides: test container, ephemeral database |
+
+## Docker containers
+
+See [`containers/`](./cache/containers/) for per-container docs:
+- [`sync`](./cache/containers/sync.mdx) — Django HTTP API
+- [`create_tables`](./cache/containers/create_tables.mdx) — schema migration
+- [`database`](./cache/containers/database.mdx) — PG18 + PostGIS
+- [`cloudflared`](./cache/containers/cloudflared.mdx) — tunnel (prod only)
+- [`test`](./cache/containers/test.mdx) — Python tests

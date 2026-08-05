@@ -1,0 +1,229 @@
+---
+title: GitHub Runners
+status: active
+published: "2026-07-28T03:21:40"
+last_updated: "2026-07-28T03:21:40"
+---
+
+## Overview
+
+Self-hosted GitHub runners execute CI/CD workflows on your own infrastructure. The two runner setups here complement each other:
+
+| Setup                        | Purpose                                                                |
+| ---------------------------- | ---------------------------------------------------------------------- |
+| **K8s / KEDA runner**        | Production CI — auto-scaling, ephemeral runners that run workflow jobs |
+| **Docker standalone runner** | Local testing of the runner image and workflow execution               |
+
+Jobs dispatched to the K8s runner use `docker compose` for multi-container integration tests. The same `docker compose` tooling can be run locally via the standalone runner for development.
+
+## K8s / KEDA runner
+
+A Kubernetes Deployment runs two containers per pod:
+
+1. **Runner container** — the GitHub Actions runner agent (`myoung34/github-runner`).
+2. **DinD sidecar** — `docker:dind` providing a Docker daemon so workflow jobs can use `docker`, `docker compose`, and build/push images.
+
+KEDA monitors the repo's workflow job queue via the GitHub API and scales the Deployment from 0 to N replicas as needed. When the queue is empty, it scales back to 0.
+
+Key properties:
+
+- **Ephemeral:** Each runner instance handles exactly one job, then deregisters and exits.
+- **Scale-to-zero:** No resource consumption when idle.
+- **Repo-scoped:** Each Deployment targets a single repository.
+- **Jobs use `docker compose`:** Workflow steps can run multi-container tests via `docker compose` thanks to the DinD sidecar.
+
+### Current instances
+
+| Repo                           | K8s overlay                        | Labels                  |
+| ------------------------------ | ---------------------------------- | ----------------------- |
+| `Wywy-Website-Control`         | `k8s/dev/github-runner/control/`   | `self-hosted,wywy`      |
+| `Wywy-Website-Master-Database` | `k8s/dev/github-runner/master-db/` | `self-hosted,wywy,dind` |
+
+## Docker standalone runner (local testing)
+
+The `docker/github-runner/` directory builds a custom image (`ghcr.io/wywysenarios/gh-runner`) that bundles the Docker daemon and the runner agent into a single container. This is used for:
+
+- **Testing the runner image** — verify dockerd + runner agent integration before deploying to K8s.
+- **Running workflows locally** — execute CI workflows on your development machine without a K8s cluster.
+- **Developing runner changes** — iterate on the Dockerfile and entrypoint locally.
+
+Run it with:
+
+```bash
+GITHUB_PAT=$(sops --decrypt secrets/github-runner-token.sops) \
+  docker compose -f docker/github-runner/docker-compose.yml up -d
+```
+
+The PAT is decrypted from SOPS at runtime and passed as an environment variable — never written to disk.
+
+## Runner scope
+
+Runners can be scoped at two levels:
+
+| Scope    | Registration target               | Use case                                                                    |
+| -------- | --------------------------------- | --------------------------------------------------------------------------- |
+| **Repo** | `https://github.com/<org>/<repo>` | Isolates failures and secrets per repo. Each repo needs its own deployment. |
+| **Org**  | `https://github.com/<org>`        | Single runner pool shared across all org repos.                             |
+
+## Labels (tags)
+
+Labels route workflow jobs to the correct runner pool. Every job in `.github/workflows/*.yml` must set `runs-on:` to a label set that matches the runner's configured labels.
+
+Common label conventions:
+
+| Label         | Meaning                                        |
+| ------------- | ---------------------------------------------- |
+| `self-hosted` | Distinguishes from GitHub-hosted runners       |
+| `<org-label>` | Organizational namespace (e.g. `wywy`)         |
+| `dind`        | Job needs Docker-in-Docker (sidecar available) |
+
+The combination of labels used in `runs-on:` must be a **subset** of the runner's configured labels. For example, a runner with labels `self-hosted,wywy,dind` will accept jobs requesting `[self-hosted, wywy]` or `[wywy, dind]` or `[self-hosted, wywy, dind]`.
+
+### Adding a new label
+
+1. Add the label to `RUNNER_LABELS` in the runner's deployment manifest or env config.
+2. Update the workflow files in the target repo to set `runs-on:` to the matching labels.
+
+## Runtime environment
+
+### Docker-in-Docker (DinD)
+
+The K8s runner provides Docker via a DinD sidecar:
+
+- Binds to `127.0.0.1:2375` (loopback only — not reachable from outside the pod).
+- Requires **privileged** security context.
+- Mounts an `emptyDir` volume at `/var/lib/docker` (deleted when the pod scales to zero).
+
+The runner connects via `DOCKER_HOST=tcp://127.0.0.1:2375` with TLS verification disabled since the socket is loopback-only.
+
+### Resource limits
+
+Resource requests and limits prevent a single CI job from exhausting the node. You may modify the relevant k8s manifest at `k8s/dev/github-runner/base/deployment.yaml`.
+
+### Network policy
+
+Runner pods are locked down with a restrictive egress policy:
+
+- **Allowed outbound:** DNS (UDP/TCP :53), HTTPS (:443) to public IPs only.
+- **Blocked outbound:** Private/internal IP ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`).
+- **Rationale:** Prevents an exploited runner from reaching the K8s API server, internal services, or the cluster-internal Docker registry.
+
+If a job legitimately needs to reach an internal service (e.g. a private Docker registry on a specific IP), add a targeted exception to the network policy.
+
+### Secrets
+
+The runner PAT is stored encrypted in `secrets/github-runner-token.sops` (SOPS-encrypted, tracked in git).
+
+K8s secrets are created manually (NOT by automation):
+
+```bash
+kubectl create secret generic github-runner-pat -n github-runner \
+  --from-literal=token=$(sops --decrypt secrets/github-runner-token.sops)
+
+kubectl create secret docker-registry regcred-ghcr -n github-runner \
+  --docker-server=ghcr.io \
+  --docker-username=WywySenarios \
+  --docker-password=$(sops --decrypt secrets/github-runner-token.sops)
+```
+
+The `github-runner-pat` secret is referenced by both the Deployment (via `env[].valueFrom.secretKeyRef`) and the KEDA `TriggerAuthentication` (via `secretTargetRef`).
+
+For the Docker standalone runner, the PAT is decrypted at runtime:
+
+```bash
+TOKEN="$(sops --decrypt "$CONTROL_DIR/secrets/github-runner-token.sops")"
+export GITHUB_PAT="$TOKEN"
+exec docker compose -f docker/github-runner/docker-compose.yml "$@"
+```
+
+## How to add a runner for a new repo
+
+### 1. K8s overlay
+
+Create a Kustomize overlay that patches the base deployment and KEDA ScaledObject for the new repo.
+
+**`k8s/dev/github-runner/<name>/kustomization.yaml`:**
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+nameSuffix: -<name>
+resources:
+  - ../base
+patches:
+  - path: patches.yaml
+  - target:
+      group: keda.sh
+      version: v1alpha1
+      kind: ScaledObject
+      name: github-runner
+    patch: |-
+      - op: replace
+        path: /spec/scaleTargetRef/name
+        value: github-runner-<name>
+      - op: replace
+        path: /spec/triggers/0/metadata/repos
+        value: <target-repo-name>
+      - op: replace
+        path: /spec/triggers/0/metadata/labels
+        value: wywy,<additional-labels-if-any>
+      - op: replace
+        path: /spec/triggers/0/authenticationRef/name
+        value: github-runner-auth-<name>
+```
+
+**`k8s/dev/github-runner/<name>/patches.yaml`:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: github-runner
+spec:
+  template:
+    spec:
+      containers:
+        - name: runner
+          env:
+            - name: REPO_URL
+              value: https://github.com/WywySenarios/<target-repo-name>
+            - name: RUNNER_LABELS
+              value: self-hosted,wywy,<additional-labels-if-any>
+```
+
+If the repo needs `dind` (Docker-in-Docker), include `dind` in the labels so GitHub routes jobs that request it to this runner.
+
+### 2. Install script
+
+Add the new overlay to `scripts/install/k8s/github-runners.sh`:
+
+```bash
+OVERLAYS=(
+  control
+  master-db
+  <name>
+)
+```
+
+Re-run `scripts/install/k8s/github-runners.sh` to apply.
+
+### 3. CI workflow (in the target repo)
+
+Copy `.github/workflows/secrets-scan.yml` from this repo into the target repo. This workflow runs on every push/PR and targets the Wywy runner (via `runs-on: [wywy]`).
+
+Ensure the workflow's `runs-on` label(s) match the labels configured in the runner deployment. Jobs that need Docker-in-Docker should use `runs-on: [self-hosted, wywy, dind]`.
+
+## Files reference
+
+| File                                              | Purpose                                      |
+| ------------------------------------------------- | -------------------------------------------- |
+| `k8s/dev/github-runner/base/deployment.yaml`      | Base Deployment (runner + DinD sidecar)      |
+| `k8s/dev/github-runner/base/scaled-object.yaml`   | KEDA ScaledObject + TriggerAuthentication    |
+| `k8s/dev/github-runner/base/network-policy.yaml`  | Egress network policy                        |
+| `k8s/dev/github-runner/<name>/kustomization.yaml` | Per-repo overlay                             |
+| `k8s/dev/github-runner/<name>/patches.yaml`       | Per-repo env patches                         |
+| `docker/github-runner/Dockerfile`                 | Custom runner+dind image (standalone)        |
+| `docker/github-runner/docker-compose.yml`         | Standalone runner compose file               |
+| `docker/github-runner/entrypoint.sh`              | Entrypoint (start dockerd + register runner) |
+| `scripts/install/k8s/github-runners.sh`           | Deploy all K8s runner overlays               |
+| `secrets/github-runner-token.sops`                | SOPS-encrypted runner PAT                    |

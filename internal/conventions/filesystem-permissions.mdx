@@ -1,0 +1,227 @@
+---
+title: Filesystem Permissions Convention
+published: 2026-06-13T00:00:00
+status: deprecated
+---
+
+> **DEPRECATED** — This convention targets Docker Compose host mounts and is not applicable to Kubernetes deployments.
+> TODO: Write a K8s-native security context convention once services are running on K8s and enforceable patterns emerge.
+
+## Overview
+
+All directories and files on the Wywy server must follow a 5-tier
+permission model. Every tier uses two mechanisms to guarantee correct
+permissions regardless of the creating process's umask:
+
+1. **setgid bit** (`chmod g+s`) — new files and subdirectories inherit the
+   directory's group (GID 2523).
+2. **Default ACL** (`setfacl -d`) — new files and directories receive the
+   correct permissions even when the creating process uses a restrictive
+   umask (e.g. 077).
+
+Container processes run as `:2523` (no assigned user, group `Wywy-Website`).
+All source trees must be readable by GID 2523. Workspace directories must
+be read-write.
+
+---
+
+## Permission Tiers
+
+### Tier 1 — Source (read-only, shared with host)
+
+Source code trees that containers read but never write.
+
+| Property        | Value                     |
+| --------------- | ------------------------- |
+| **Mode**        | `2750`                    |
+| **Owner:Group** | `debian:2523`             |
+| **Setgid**      | Yes                       |
+| **Default ACL** | `setfacl -d -m g:2523:rx` |
+| **Mount**       | `:ro`                     |
+
+**Paths**: `/usr/local/Wywy-Website/*`, `/etc/Wywy-Website-Control`
+
+### Tier 2 — Workspace (read-write, multi-container)
+
+Shared workspace that multiple agent containers read and write.
+
+| Property        | Value                      |
+| --------------- | -------------------------- |
+| **Mode**        | `2770`                     |
+| **Owner:Group** | `root:2523`                |
+| **Setgid**      | Yes                        |
+| **Default ACL** | `setfacl -d -m g:2523:rwx` |
+| **Mount**       | `:rw`                      |
+
+**Path**: `/var/workspace/Wywy-Website`
+
+### Tier 3 — Service data (single-container)
+
+Data directories owned exclusively by a single container process.
+
+| Property        | Value         |
+| --------------- | ------------- |
+| **Mode**        | `700`         |
+| **Owner:Group** | container UID |
+| **Setgid**      | No            |
+| **Default ACL** | None          |
+| **Mount**       | `:rw`         |
+
+**Paths**: `/var/lib/Wywy-Website/orchestrator`, `/var/lib/Wywy-Website/ci`
+
+### Tier 4 — Service logs
+
+Log directories. Must not be world-accessible.
+
+| Property        | Value                             |
+| --------------- | --------------------------------- |
+| **Mode**        | `750` or `770`                    |
+| **Owner:Group** | container UID, optionally `:2523` |
+| **Setgid**      | No                                |
+| **Default ACL** | None                              |
+| **Mount**       | `:rw`                             |
+
+**Paths**: `/var/log/Wywy-Website/*`
+
+### Tier 5 — Host-only (SOPS-encrypted secrets)
+
+Secrets directory — contains SOPS-encrypted files committed to the
+repository. Files are encrypted at rest in git and decrypted in memory
+by ArgoCD's Config Management Plugin using the cluster-stored age key.
+Plaintext secrets are never written to disk on the server.
+
+| Property        | Value                           |
+| --------------- | ------------------------------- |
+| **Mode**        | `2750` (inherits Tier 1)        |
+| **Owner:Group** | `debian:2523` (inherits Tier 1) |
+| **Setgid**      | Yes                             |
+| **Default ACL** | `setfacl -d -m g:2523:rx`       |
+| **Decryption**  | ArgoCD CMP (cluster-side)       |
+
+**Path**: `/etc/Wywy-Website-Control/secrets`
+
+The age private key used for decryption is stored as a Kubernetes Secret
+in the `argocd` namespace — never on the host filesystem.
+
+---
+
+## Two-Mechanism Guarantee
+
+The setgid bit and default ACL work together to neutralize umask
+variation:
+
+| Umask | ACL group effective | ACL other | Container can read? |
+| ----- | ------------------- | --------- | ------------------- |
+| 077   | r--                 | ---       | Yes                 |
+| 022   | r--                 | ---       | Yes                 |
+| 027   | r--                 | ---       | Yes                 |
+| 000   | r--                 | ---       | Yes                 |
+
+---
+
+## Install Script Patterns
+
+### Correct — Tier 1 (Source)
+
+```bash
+# Top-level source directory
+sudo mkdir -p /usr/local/Wywy-Website
+sudo chgrp 2523 /usr/local/Wywy-Website
+sudo chmod 2750 /usr/local/Wywy-Website
+sudo setfacl -d -m g:2523:rx /usr/local/Wywy-Website
+
+# After git clone — recursive group + setgid + ACL
+sudo chgrp -R 2523 "$REPO_DIR"
+chmod -R u+rw "$REPO_DIR"
+chmod -R g=rX "$REPO_DIR"
+chmod -R o-rwx "$REPO_DIR"
+find "$REPO_DIR" -type d -exec sudo chmod g+s {} +
+sudo setfacl -R -d -m g:2523:rx "$REPO_DIR"
+```
+
+### Correct — Tier 2 (Workspace)
+
+```bash
+sudo mkdir -p /var/workspace/Wywy-Website
+sudo chgrp 2523 /var/workspace/Wywy-Website
+sudo chmod 2770 /var/workspace/Wywy-Website
+sudo setfacl -d -m g:2523:rwx /var/workspace/Wywy-Website
+```
+
+### Correct — Tier 3 (Service data)
+
+```bash
+sudo mkdir -p /var/lib/Wywy-Website/orchestrator
+sudo chown "$CONTAINER_UID" /var/lib/Wywy-Website/orchestrator
+sudo chmod 700 /var/lib/Wywy-Website/orchestrator
+
+sudo mkdir -p /var/lib/Wywy-Website/ci
+sudo chown "$CONTAINER_UID" /var/lib/Wywy-Website/ci
+sudo chmod 700 /var/lib/Wywy-Website/ci
+```
+
+### Correct — Tier 4 (Logs)
+
+```bash
+sudo mkdir -p /var/log/Wywy-Website/agentic
+sudo chown "$USER_ID":2523 /var/log/Wywy-Website/agentic
+sudo chmod 750 /var/log/Wywy-Website/agentic
+```
+
+### Correct — Tier 5 (Secrets)
+
+```bash
+sudo mkdir -p /etc/Wywy-Website-Control/secrets
+sudo chown root:root /etc/Wywy-Website-Control/secrets
+chmod 000 /etc/Wywy-Website-Control/secrets
+```
+
+### Antipatterns — Never Use
+
+```bash
+# BUG: chown USER:USER overrides a prior chgrp 2523
+sudo chgrp 2523 /path
+sudo chown $USER:$USER /path
+
+# BUG: sets group to read-write on all files (too permissive)
+chmod -R g-w+r /path
+
+# BUG: strips the setgid bit
+chmod -R 770 /path
+
+# BUG: setgid without ACL means umask 077 blocks group access
+sudo chmod 2750 /path   # missing: setfacl -d
+```
+
+---
+
+## Compliance Verification
+
+A verification script at `/etc/Wywy-Website-Control/scripts/verify-filesystem-convention.sh`
+checks every path against its tier's expected permissions. Run it after
+installation or any manual permission change:
+
+```bash
+/etc/Wywy-Website-Control/scripts/verify-filesystem-convention.sh
+```
+
+The script accepts two environment variables for testing:
+
+| Variable       | Default | Purpose                                      |
+| -------------- | ------- | -------------------------------------------- |
+| `WYWY_FS_ROOT` | `/`     | Redirect all path checks to a temp directory |
+| `WYWY_FS_GID`  | `2523`  | Override the expected group ID               |
+
+BATS tests live at `/etc/Wywy-Website-Control/tests/` and can be run with:
+
+```bash
+bats /etc/Wywy-Website-Control/tests/
+```
+
+---
+
+## Dependencies
+
+The `acl` package must be installed for `setfacl`. The main install
+script (`/etc/Wywy-Website-Control/install.sh`) checks for `setfacl` and
+installs the `acl` package if missing.

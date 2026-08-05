@@ -1,0 +1,94 @@
+---
+title: CI Conventions
+published: '2026-07-30T03:57:44'
+last_updated: '2026-07-30T03:57:44'
+---
+
+> **Language:** Bash — see [`languages/bash.mdx`](../languages/bash.mdx).
+
+## Test entrypoint
+
+Every Wywy repository **MUST** have a root-level `test.sh` script as the sole entrypoint for running tests. This is the only way to run tests — direct invocation of test runners (`pytest`, `bats`, `valgrind`, etc.) is not permitted. All CI workflows, `ci.sh`, and developer workflows use `test.sh`.
+
+The `test.sh` script is responsible for:
+
+- Starting all required services (via `docker compose up`)
+- Running test suites
+- Collecting exit codes from all test containers
+- Tearing down services
+- Exiting with a non-zero code if **any** test suite failed
+
+## Script hardening
+
+`test.sh` **MUST** be resilient against symlinks and callable from any working directory on the machine.
+
+### Symlink resolution
+
+Use `${BASH_SOURCE[0]}` (not `$0`) to resolve the script's own location:
+
+```bash
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+```
+
+### Working directory independence
+
+`cd` to `SCRIPT_DIR` **immediately after computing it**, so all subsequent relative paths resolve against the repository root regardless of the caller's `$PWD`:
+
+```bash
+SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+cd "$SCRIPT_DIR"
+```
+
+This ensures that:
+
+- `docker compose -f` paths (which are resolved by Docker Compose relative to the process CWD) work correctly.
+- Local config/log paths are found relative to the repo root.
+
+### Relative paths from SCRIPT_DIR
+
+All paths in `test.sh` — compose file paths, config references, log directory references — **MUST** be relative to `SCRIPT_DIR`. Never use absolute paths that embed a specific deployment path.
+
+## Config provisioning
+
+Config files **MUST** be pre-staged before `test.sh` is invoked. `test.sh` **MUST NOT** download or generate config at runtime — no `curl`, `wget`, or equivalent fallback.
+
+Rationale:
+
+- **Security**: The config is a trusted artifact; downloading it from a remote URL at test time introduces a network dependency and a supply-chain risk.
+- **Predictability**: A test run should give the same result regardless of network availability or upstream changes.
+- **Separation of concerns**: Provisioning is the responsibility of the CI runner (`ci.sh`) or the developer's setup, not the test entrypoint.
+
+Expected config path: `config/ci/config.yml` (relative to `SCRIPT_DIR`).
+
+In CI, the runner downloads and stages config before invoking `test.sh`. Locally, developers run `scripts/install/ci.sh` or equivalent provisioning steps.
+
+## Service lifecycle
+
+`test.sh` manages its services via Docker Compose. The compose command **MUST** use absolute or `SCRIPT_DIR`-relative `-f` paths (safe because of the mandatory `cd "$SCRIPT_DIR"` at the top):
+
+```bash
+COMPOSE="docker compose \
+  -f docker/docker-compose.base.yml \
+  -f docker/docker-compose.test.yml"
+```
+
+Cleanup **MUST** happen on any exit path (success, failure, SIGINT, SIGTERM). Use a `trap` on `EXIT` to tear down services.
+
+## Error handling
+
+`test.sh` **MUST** use `set -euo pipefail` (standard bash convention).
+
+If `docker compose up` fails, the script **MUST** dump container logs and exit non-zero, so CI can surface the failure reason without a separate log-collection step.
+
+## Exit codes
+
+`test.sh` **MUST** exit 0 if all test suites passed, non-zero if any suite failed. Aggregate exit codes from all test containers — do not short-circuit on the first failure.
+
+## Related conventions
+
+| Convention | File |
+|---|---|
+| Bash scripting | [`languages/bash.mdx`](../languages/bash.mdx) |
+| Docker images and Compose layering | [`tech-stack/docker-images.mdx`](../tech-stack/docker-images.mdx) |
+| Configuration files | [`tech-stack/configuration.mdx`](../tech-stack/configuration.mdx) |
+| GitHub runner setup | `internal/github-runners.mdx` |

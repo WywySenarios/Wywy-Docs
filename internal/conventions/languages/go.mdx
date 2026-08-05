@@ -1,0 +1,160 @@
+---
+title: Go Conventions
+published: 2026-06-21T00:00:00
+---
+
+## Go version
+
+Use Go 1.23+. Start with the latest stable release for new projects. Existing `go.mod` files pin the version and should not be bumped unless a dependency requires it.
+
+## Code formatting
+
+- All Go code MUST be formatted with `gofmt` (or `gofumpt` for stricter formatting).
+- Run `gofmt -s -w <file>.go` before committing. The `-s` flag simplifies redundant code.
+- Tab indentation, 8-character tab width (Go standard).
+
+## Naming conventions
+
+- **`camelCase`** for unexported functions, variables, and methods.
+- **`PascalCase`** for exported functions, types, and constants.
+- **`ALL_CAPS`** for constants only when necessary (prefer typed constants over `iota` where it improves clarity).
+- Acronyms should be all-caps or all-lowercase consistently: `HTTP`, `URL`, `ID`, `DB` — not `Http`, `Url`, `Id`, `Db`.
+- Single-letter variable names are acceptable only for short-lived loop indices (`i`, `j`, `k`) or very narrow scopes (3 lines or fewer). Otherwise use descriptive names.
+- Package names should be short, lowercase, and one word. Avoid `utils`, `common`, `misc` — prefer descriptive names like `auth`, `config`, `db`.
+
+## Error handling
+
+- Always check errors. Do not use `_` to silently discard an error unless a comment explains why it is safe.
+- Prefer early returns over deeply nested `if err != nil` blocks.
+- Wrap errors with context using `fmt.Errorf("doing something: %w", err)`.
+- Use `errors.Is()` and `errors.As()` for sentinel and typed error matching. Define sentinel errors with `var ErrFoo = errors.New("foo failed")`.
+- Panic only for truly unrecoverable states (programmer bugs, invariant violations). Do not panic for expected errors (e.g., bad input, network failures).
+
+```go
+// Good
+result, err := doSomething()
+if err != nil {
+    return fmt.Errorf("doSomething: %w", err)
+}
+
+// Avoid — silent discard without justification
+result, _ := doSomething()
+```
+
+## Documentation comments
+
+- Every exported declaration (function, type, const, var) MUST have a `// Comment` immediately above it.
+- Comments should be complete sentences ending in a period, naming the declared symbol:
+
+```go
+// ParseConfig reads and validates the configuration file.
+func ParseConfig(path string) (*Config, error) {
+```
+
+- Unexported functions should have a comment when the behaviour is non-obvious or when it would be idiomatic to document them.
+- Package-level doc comment goes in `doc.go` or as a comment above the `package` declaration.
+
+## Imports
+
+Group imports in three sections separated by a blank line:
+
+1. Standard library
+2. Third-party packages
+3. Local/workspace packages
+
+```go
+import (
+    "context"
+    "fmt"
+    "os"
+
+    "github.com/google/uuid"
+    "go.uber.org/zap"
+
+    "wywy-website-control/internal/config"
+)
+```
+
+## Testing
+
+- Use the standard `testing` package. No external test frameworks.
+- Test files named `*_test.go`, placed alongside the code they test (same package, or `_test` suffix for external tests).
+- Test functions use `t *testing.T` parameter — no `testing.TB` unless benchmarking.
+- Table-driven tests are preferred for testing multiple inputs:
+
+```go
+func TestParseConfig(t *testing.T) {
+    tests := []struct {
+        name    string
+        path    string
+        wantErr bool
+    }{
+        {name: "valid", path: "testdata/valid.json", wantErr: false},
+        {name: "missing", path: "testdata/missing.json", wantErr: true},
+    }
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            _, err := ParseConfig(tt.path)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("ParseConfig() error = %v, wantErr %v", err, tt.wantErr)
+            }
+        })
+    }
+}
+```
+
+- Use `t.Fatal`/`t.Fatalf` for failures that must halt the test, `t.Error`/`t.Errorf` for non-fatal failures.
+- Use `testdata/` directory for test fixture files (Go tooling ignores this directory in builds).
+- Golden files (`testdata/*.golden`) for output comparison when appropriate.
+
+## Concurrency
+
+- Use goroutines and channels as the primary concurrency primitive. Avoid `sync.Mutex` where channels can model the interaction more clearly.
+- When `sync.Mutex` or `sync.RWMutex` is necessary, guard the mutex with a clear locked region. Prefer `defer mu.Unlock()` immediately after `mu.Lock()`.
+- Use `sync.WaitGroup` for waiting on a collection of goroutines. Use `errgroup` (from `golang.org/x/sync/errgroup`) when goroutines return errors.
+- Never pass a `sync.Mutex` by value (always pass `*sync.Mutex`).
+- Use `context.Context` as the first parameter in any function that performs I/O, blocks, or is cancellable. Follow the convention `ctx context.Context`.
+
+```go
+func FetchData(ctx context.Context, url string) ([]byte, error) {
+    req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+    if err != nil {
+        return nil, fmt.Errorf("creating request: %w", err)
+    }
+    // ...
+}
+```
+
+## Tooling
+
+### Linting (golangci-lint)
+
+Use **golangci-lint** for linting. Configuration lives in `.golangci.yml` at the project root. Run before committing:
+
+```bash
+golangci-lint run ./...
+```
+
+### Static analysis (go vet)
+
+Always run `go vet ./...` before committing to catch common issues:
+
+```bash
+go vet ./...
+```
+
+### Dependency management
+
+- Use Go modules (`go mod tidy` to clean up, `go mod verify` to verify checksums).
+- Pin direct dependencies in `go.mod`. Use `go get` for adding/updating.
+- Avoid replacing upstream modules with `replace` directives unless absolutely necessary, and document why.
+
+### Build
+
+```bash
+go build ./...
+```
+
+## Related tech stack
+
+No tech-stack-specific conventions for Go yet. If a framework or tool is adopted (e.g., Chi, Gin, Connect-Go), add a file in `tech-stack/` and link it here.

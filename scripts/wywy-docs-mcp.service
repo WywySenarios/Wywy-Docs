@@ -7,11 +7,11 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Documents/wywy
-Environment=WYWY_ROOT=%h/Documents/wywy
+EnvironmentFile=%h/.config/wywy-docs-mcp/environment
+WorkingDirectory=%h
 # Set PORT to a custom listening port (default: 2530 if unset)
 Environment=PORT=
-ExecStart=%h/Documents/wywy/.venv/bin/python -m wywy_docs.server
+ExecStart=/bin/sh -c 'exec "$WYWY_DOCS_DIR/.venv/bin/python" -m wywy_docs.server'
 Restart=on-failure
 RestartSec=5
 

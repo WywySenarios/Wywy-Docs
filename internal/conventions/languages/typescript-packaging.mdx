@@ -1,0 +1,77 @@
+---
+title: TypeScript Packaging Conventions
+published: 2026-06-05T00:00:00
+---
+
+## Monorepo structure
+
+The Wywy-Website codebase is a monorepo. Applications live in `apps/` and shared packages live alongside them as sibling directories:
+
+```
+Wywy-Website/
+  apps/
+    astro-app/            # Astro frontend
+    electron-app/         # Electron desktop wrapper
+    pipeline/             # Pipeline shared module
+    http/                 # HTTP client shared module
+  ...
+```
+
+## Cross-app imports
+
+Shared packages are imported via TypeScript path aliases defined in both `tsconfig.json` and Vite resolve aliases (`astro.config.mjs`):
+
+```json
+// tsconfig.json
+{
+  "compilerOptions": {
+    "paths": {
+      "@pipeline/*": ["../pipeline/src/*"],
+      "@wywy/http/*": ["../http/src/*"]
+    }
+  }
+}
+```
+
+```ts
+import { loginAll, logoutAll } from "@wywy/http/auth";
+import { PipelineProvider } from "@pipeline/react/pipeline-provider";
+```
+
+## Package.json fields
+
+Each shared package MUST define:
+
+```json
+{
+  "name": "@wywy/pipeline",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "private": true
+}
+```
+
+All packages in the monorepo are `"private": true`.
+
+## Import / export patterns
+
+- Shared packages export from a `src/index.ts` barrel file.
+- Consumers import specific named exports, not the barrel (tree-shaking).
+- No default exports — use named exports exclusively.
+
+```ts
+// GOOD
+export function loginAll() { ... }
+
+// BAD
+export default function loginAll() { ... }
+```
+
+## SDK
+
+A shared internal SDK package will be extracted from the utility functions currently in `src/utils/` (see [`typescript-helpers.mdx`](./typescript-helpers.mdx)). The SDK will follow the same monorepo pattern as `@pipeline` and `@wywy/http`.
+
+## Build output
+
+Currently nothing builds TypeScript independently — the Astro/Vite bundler resolves cross-app imports at build time. Future packages may have their own build step producing compiled output in a `dist/` directory.

@@ -1,0 +1,79 @@
+---
+title: Configuration
+published: 2026-04-09T18:17:58+00:00
+---
+
+# Databases
+
+Each database contains one or more tables worth of data.
+
+Each database has its own:
+
+- Metrics
+- Dashboard
+- Tables (at least 1)
+
+Properties of a database include:
+
+- `dbname`: maximum length of 32 characters. Database names may not be empty.
+- [`tables`](#tables)
+- [`dashboard`](./dashboard.mdx)
+
+# Tables
+
+Properties of a table include:
+
+- `tableName`: maximum length of 32 characters. Long table and descriptor names may exceed the PostgreSQL Identifier limit of 63 characters.
+- `read`: Setting this option to false will soft-lock the database from reads. This does not prevent direct SQL queries from grabbing the data.
+- `write`: Setting this option to false will soft-lock the database from modification. This does not prevent direct SQL queries from modifying the table.
+- `entrytype`: What type of form should the user see when entering data?
+- [`tagging`](#tags): enable/disable tagging.
+- `schema`: [Table column schema.](#columns) Column schemas are supplied in an array. Each table may have up to 64 columns and sub-columns.
+- [`metrics`](./metrics.mdx)
+
+@TODO write ./forms.mdx
+
+# Columns
+
+Properties of a column include:
+
+- `name`:
+  - Display name of the column.
+  - Maximum length of 32 characters.
+  - See [serialization](./api/serialization.mdx#json-keys) for more technical details.
+- `parser`: @TODO
+- [`datatype`](#datatypes)
+- `entrytype`: The input element to render inside a form. @TODO
+- `comments`: Whether or not to add a comments sub-column. The sub-column will be named `[column name] Comments`
+- `description`
+
+## Datatypes
+
+- `int`, `integer`
+- `float`, `number`: double
+- `string`, `str`, `text`
+- `bool`, `boolean`
+- `date`
+- `time`
+- `timestamp`
+- `geodetic point`
+
+@TODO implement enums
+
+# Tags
+
+Tags are strings that relate to an entry inside the table.
+
+Multiple tags can relate to the same table entry (e.g. `tall` and `short` can apply to one `person`).
+
+# Descriptors
+
+Descriptors are sub-entries of a table. If a portion of the data is sometimes relevant or can apply multiple times (and tags are not sufficient to describe the aforementioned portion of data), use a descriptor to describe that portion of the data.
+
+Multiple descriptors of the same type can be applied to the same table. (e.g. two `friend` descriptors can relate to one entry of the `events` table.)
+
+Properties of a descriptor include:
+
+- `name`
+- `schema`: [Descriptor column schema.](#columns) Column schemas are supplied in an array. Each descriptor may have up to 64 columns and sub-columns.
+- [`metrics`](./metrics.mdx)

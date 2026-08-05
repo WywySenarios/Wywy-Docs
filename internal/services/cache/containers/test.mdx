@@ -1,0 +1,16 @@
+---
+title: test (cache)
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+Runs Python tests against the cache sync service (test mode only).
+
+## Dockerfile
+
+`apps/tests/Dockerfile` — `python:3.12-slim`, installs sync's requirements. Prepares cache dir at `/var/lib/Wywy-Website/cache`. Command: `python manage.py test`.
+
+## Docker Compose
+
+Test-only in `docker-compose.test.yml`. Depends on `sync`, `create_tables` (completed), `database` (healthy). Mounts `apps/sync` as source.

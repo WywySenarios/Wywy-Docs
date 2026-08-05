@@ -1,0 +1,28 @@
+---
+title: sql-receptionist
+published: 2026-05-22T00:00:00
+---
+
+## Purpose
+
+C11 HTTP API (port 2523) serving database requests via pthreads, libpq, libcyaml, jansson, libssl, libargon2.
+
+## Dockerfile
+
+`apps/sql-receptionist/Dockerfile` — multi-stage:
+- `fetcher`: downloads jansson + libcyaml source
+- `builder`: compiles libraries, installs deps
+- `dev` (from builder): valgrind + gdb + nano, source copied
+- `prod` (from builder): pre-built binary
+- `unit_test` (from builder): unit test source + valgrind
+
+## Docker Compose
+
+- Base: `docker-compose.base.yml` — port 2523, admin secret, depends on postgres.
+- Dev: target `dev`, LIBCYAML_VARIANT=debug, Docker Watch, joins `wywy_website_master_database-sql_receptionist` network. Command runs `make clean && make && valgrind ./app`.
+- Prod: target `prod`, LIBCYAML_VARIANT=release, networks `cloudflared` + `postgres`.
+
+## Volumes
+
+- Config: `${UNIVERSAL_CONFIG_DIR}/config.yml:/config.yml`
+- Logs: `/var/log/Wywy-Website/master-database:/var/log/Wywy-Website/master-database`

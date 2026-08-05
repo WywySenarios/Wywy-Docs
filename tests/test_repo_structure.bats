@@ -4,14 +4,14 @@ setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 }
 
-@test "docs/ symlink exists and points to /etc/Wywy-Website-Control/docs/" {
-    [ -L "$REPO_ROOT/docs" ]
-    [ "$(readlink "$REPO_ROOT/docs")" = "/etc/Wywy-Website-Control/docs/" ]
+@test "docs/ is a regular directory" {
+    [ -d "$REPO_ROOT/docs" ]
+    [ ! -L "$REPO_ROOT/docs" ]
 }
 
-@test "internal/ symlink exists and points to /etc/Wywy-Website-Control/internal/" {
-    [ -L "$REPO_ROOT/internal" ]
-    [ "$(readlink "$REPO_ROOT/internal")" = "/etc/Wywy-Website-Control/internal/" ]
+@test "internal/ is a regular directory" {
+    [ -d "$REPO_ROOT/internal" ]
+    [ ! -L "$REPO_ROOT/internal" ]
 }
 
 @test "src/ directory exists" {
@@ -46,19 +46,11 @@ setup() {
     grep -q "%h/" "$REPO_ROOT/scripts/wywy-docs-mcp.service"
     ! grep -q "^User=" "$REPO_ROOT/scripts/wywy-docs-mcp.service"
     grep -q "\-m wywy_docs.server" "$REPO_ROOT/scripts/wywy-docs-mcp.service"
-    grep -q "Environment=WYWY_ROOT=%h/Documents/wywy" "$REPO_ROOT/scripts/wywy-docs-mcp.service"
+    grep -q "EnvironmentFile=%h/.config/wywy-docs-mcp/environment" "$REPO_ROOT/scripts/wywy-docs-mcp.service"
 }
 
 @test "README.md exists" {
     [ -f "$REPO_ROOT/README.md" ]
-}
-
-@test ".gitignore excludes docs/" {
-    grep -q "^docs/$" "$REPO_ROOT/.gitignore"
-}
-
-@test ".gitignore excludes internal/" {
-    grep -q "^internal/$" "$REPO_ROOT/.gitignore"
 }
 
 @test ".gitignore excludes wywy_docs/docs_index.db" {

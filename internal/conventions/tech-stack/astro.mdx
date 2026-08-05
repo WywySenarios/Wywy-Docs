@@ -1,0 +1,175 @@
+---
+title: Astro Conventions
+published: 2026-06-05T00:00:00
+---
+
+> **Language:** TypeScript — see [`languages/typescript.mdx`](../languages/typescript.mdx).
+
+## Project location
+
+The Astro app lives at `apps/astro-app/` in the Wywy-Website monorepo.
+
+## Rendering mode
+
+SSG (static site generation) only. Every page MUST set `export const prerender = true`. Dynamic routes MUST use `export function getStaticPaths()`.
+
+```astro
+---
+// src/pages/[collectionType].astro
+export const prerender = true;
+
+export async function getStaticPaths() {
+    const docs = await getCollection("docs");
+    return docs.map((entry) => ({ params: { ... } }));
+}
+---
+```
+
+## Page routing
+
+File-based routing under `src/pages/`. Directory structure:
+
+```
+src/pages/
+  index.astro                          # /
+  settings.astro                       # /settings
+  schema.ts                            # /schema (API endpoint, GET → YAML)
+  [collectionType].astro               # /{collectionType}
+  docs/
+    [...id].astro                      # /docs/{...id}
+  projects/
+    frogjump.astro                     # /projects/frogjump
+    mylocation.astro                   # /projects/mylocation
+    wishlist.astro                     # /projects/wishlist
+    allaboutsleep.astro                # /projects/allaboutsleep
+    rpsruntime.astro                   # /projects/rpsruntime
+  pipeline/
+    index.astro                        # /pipeline
+  data/
+    [databaseName]/
+      dashboard.astro                  # /data/{db}/dashboard
+      [tableName]/
+        dataentry.astro                # /data/{db}/{table}/dataentry
+        entries/
+          [...slug].astro              # /data/{db}/{table}/entries/{...slug}
+        explore/
+          [...slug].astro              # /data/{db}/{table}/explore/{...slug}
+```
+
+## Component organization
+
+### Directory structure
+
+```
+src/components/
+  Card.astro             # Shared Astro components (PascalCase.astro)
+  FallingBg.astro
+  LinklessCard.astro
+  NavDrawer.tsx          # Shared React components (PascalCase.tsx)
+  auth/                  # Domain-specific subdirectories (kebab-case)
+    login-dialog.tsx
+  data/
+    chart.tsx
+    dashboard.tsx
+    chart/               # Nested subdirectories for grouped components
+      gauge-chart.tsx
+      tree-map.tsx
+      waterfall-chart.tsx
+    data-entry/
+      form.tsx
+      timer.tsx
+    entries/
+      entry.tsx
+      entry-table.tsx
+    input-element/
+      geodetic-coordinate.tsx
+      number-box.tsx
+      search-select.tsx
+  projects/              # Project-specific components
+    frogjump/
+      dice.astro
+  settings/
+    SettingsForm.tsx
+  ui/                    # shadcn/ui primitives (kebab-case filenames)
+    button.tsx
+    card.tsx
+    dialog.tsx
+```
+
+### Naming conventions
+
+- Astro components: PascalCase `.astro` (e.g., `Card.astro`, `FallingBg.astro`).
+- React components: PascalCase `.tsx` for domain components (e.g., `NavDrawer.tsx`).
+- shadcn/ui primitives: kebab-case `.tsx` (e.g., `button.tsx`, `scroll-area.tsx`).
+- Subdirectories: kebab-case (e.g., `data-entry/`, `input-element/`).
+
+## Island architecture
+
+React components embedded in Astro pages use client directives for hydration:
+
+| Directive            | Use case                                             |
+| -------------------- | ---------------------------------------------------- |
+| `client:only="react"`| Browser-only APIs (auth, geolocation, form state)    |
+| `client:load`        | Components needing immediate hydration (nav, toast)  |
+
+```astro
+<NavDrawer client:load />
+<LoginDialog client:only="react" />
+<Toaster client:load />
+```
+
+No usage of `client:visible`, `client:idle`, or `client:media`.
+
+## Layouts
+
+Layout composition pattern:
+
+```
+Layout.astro            # Root shell (nav, toasts, auth, pipeline provider)
+  └── LayoutFallingBgWywy.astro  # Extends Layout with falling background
+```
+
+Pages pass `css_color_palette` prop to control theme (`"dark_mode"`, `"light_mode"`, `"sunset"`).
+
+Layout defines named `<slot>` regions:
+- `<slot name="head">` — page-specific `<head>` content.
+- `<slot name="top-bar-button2">` / `<slot name="top-bar-button3">` — extra nav buttons.
+- `<slot />` — page content.
+
+## Content collections
+
+Defined in `src/content.config.ts`:
+
+| Collection  | Loader    | Source directory         |
+| ----------- | --------- | ------------------------ |
+| `docs`      | glob MDX  | `src/content/docs/`      |
+| `projects`  | glob MD   | `src/data/projects/`     |
+| `directives`| glob MD   | `src/data/directives/`   |
+| `schedules` | glob MD   | `src/data/schedules/`    |
+| `wishlist`  | glob MD   | `src/data/wishlist/`     |
+| `datasets`  | glob JSON | `src/data/datasets/`     |
+
+## Path aliases
+
+Defined in `tsconfig.json` and `astro.config.mjs`:
+
+| Alias               | Resolves to                    | Purpose                     |
+| ------------------- | ------------------------------ | --------------------------- |
+| `@/`                | `./src/`                       | Internal imports            |
+| `@root/`            | `./*`                          | Astro app root              |
+| `@pipeline/`        | `../pipeline/src/`             | Cross-app shared module     |
+| `@wywy/http/`       | `../http/src/`                 | Cross-app shared module     |
+| `@universal_root/`  | `../../*`                      | Monorepo root               |
+
+## Integrations
+
+Configured in `astro.config.mjs`:
+- `@astrojs/cloudflare` — Cloudflare Pages deployment.
+- `@astrojs/mdx` — MDX content rendering.
+- `@astrojs/react` — React component support.
+- `@tailwindcss/vite` — Tailwind CSS v4.
+- `@rollup/plugin-yaml` — YAML file imports.
+
+## Middleware
+
+No middleware is used. The site is fully static.
