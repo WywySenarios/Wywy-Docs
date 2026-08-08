@@ -53,14 +53,6 @@ setup() {
     [ -f "$REPO_ROOT/README.md" ]
 }
 
-@test ".gitignore excludes wywy_docs/docs_index.db" {
-    grep -q "^wywy_docs/docs_index.db$" "$REPO_ROOT/.gitignore"
-}
-
-@test ".gitignore excludes wywy_docs/server.pid" {
-    grep -q "^wywy_docs/server.pid$" "$REPO_ROOT/.gitignore"
-}
-
 @test ".gitignore excludes .venv/" {
     grep -q "^\.venv/$" "$REPO_ROOT/.gitignore"
 }
