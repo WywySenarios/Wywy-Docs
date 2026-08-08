@@ -99,6 +99,24 @@ def _normalize_doc_path(path: str) -> str:
     return path
 
 
+def _sanitize_query(query: str) -> str:
+    """Convert a user query into a literal FTS5 phrase-AND query.
+
+    Strips embedded double quotes and C0 control characters (``\\x00-\\x1f``,
+    NUL included), splits on whitespace, wraps each token in double quotes,
+    and joins with spaces so FTS5 treats every token as a literal phrase
+    rather than operator syntax (``-``, ``OR``, ``*``, etc.).
+
+    Raises:
+        ValueError: If no tokens remain after sanitization.
+    """
+    _strip = {ord('"'): None, **{i: None for i in range(0x20)}}
+    tokens = query.translate(_strip).split()
+    if not tokens:
+        raise ValueError("query must be a non-empty string")
+    return " ".join(f'"{t}"' for t in tokens)
+
+
 def _resolve_section_path(section: str, path: str) -> str:
     """Resolve an absolute filesystem path within a section, guarding
     against symlink-based directory escape.
@@ -130,11 +148,12 @@ def search_docs(query: str, max_results: int = 10):
     """Full-text search across documentation.
 
     Args:
-        query: Search query (FTS5 syntax).
+        query: Literal text to search for. Hyphens and punctuation are treated literally.
         max_results: Maximum number of results (default 10).
     """
     if not query or not query.strip():
         raise ValueError("query must be a non-empty string")
+    sanitized = _sanitize_query(query)
     db = _db_path()
     try:
         conn = sqlite3.connect(db)
@@ -147,7 +166,7 @@ def search_docs(query: str, max_results: int = 10):
                WHERE docs_fts MATCH ?
                ORDER BY rank
                LIMIT ?""",
-            (query, max_results),
+            (sanitized, max_results),
         )
         results = [
             {

@@ -579,6 +579,8 @@ class TestToolsList(unittest.TestCase):
         self.assertIn("search_docs", tool_names)
         self.assertIn("get_doc", tool_names)
         self.assertIn("delete_doc", tool_names)
+        search_docs_tool = next(t for t in tools if t["name"] == "search_docs")
+        self.assertIn("literal", search_docs_tool["description"])
 
 
 class TestSearchDocsTool(unittest.TestCase):
@@ -594,6 +596,7 @@ class TestSearchDocsTool(unittest.TestCase):
                 "docs/hello.mdx": "---\ntitle: Hello World\n---\nThis is a shared_term greeting document.",
                 "docs/goodbye.mdx": "---\ntitle: Goodbye\n---\nFarewell message.",
                 "docs/python.mdx": "---\ntitle: Python Guide\n---\nPython is a programming language.",
+                "docs/tree-map.mdx": "---\ntitle: Tree Map\n---\nThe tree-map visualization shows ancestry.",
                 "internal/guide.mdx": "---\ntitle: Internal Guide\n---\nThis is an internal guide with shared_term.",
             },
         )
@@ -674,8 +677,8 @@ class TestSearchDocsTool(unittest.TestCase):
         self.assertEqual(resp["error"]["code"], -32602)
         self.assertIn("query must be a non-empty string", resp["error"]["message"])
 
-    def test_search_docs_malformed_query_returns_error(self) -> None:
-        """Malformed FTS5 query returns JSON-RPC error -32603."""
+    def test_search_docs_operator_soup_is_literal(self) -> None:
+        """Operator soup like ``a OR OR b`` is treated as literal text, not FTS5 syntax."""
         resp = self.client.send_message(
             {
                 "jsonrpc": "2.0",
@@ -687,8 +690,80 @@ class TestSearchDocsTool(unittest.TestCase):
                 },
             }
         )
+        self.assertIn("result", resp)
+        content = resp["result"]["content"]
+        self.assertIsInstance(content, list)
+        body_text = " ".join(str(item.get("text", "")) for item in content)
+        results = json.loads(body_text)
+        self.assertEqual(results, [])
+
+    def test_search_docs_hyphenated_query_returns_results(self) -> None:
+        """A hyphenated query is literal text, returning the matching doc instead of -32603."""
+        resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 21,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_docs",
+                    "arguments": {"query": "tree-map", "max_results": 10},
+                },
+            }
+        )
+        self.assertIn("result", resp)
+        content = resp["result"]["content"]
+        self.assertIsInstance(content, list)
+        body_text = " ".join(str(item.get("text", "")) for item in content)
+        results = json.loads(body_text)
+        self.assertGreater(len(results), 0)
+        self.assertIn("docs/tree-map.mdx", [r["path"] for r in results])
+
+    def test_search_docs_unbalanced_quotes_stripped(self) -> None:
+        """An unbalanced double quote is stripped safely instead of raising -32603."""
+        resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 22,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_docs",
+                    "arguments": {"query": 'say "hello', "max_results": 10},
+                },
+            }
+        )
+        self.assertIn("result", resp)
+
+    def test_search_docs_quote_only_query_returns_empty_error(self) -> None:
+        """A query that sanitizes to empty keeps the empty-query -32602 contract."""
+        resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 23,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_docs",
+                    "arguments": {"query": '"'},
+                },
+            }
+        )
         self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32603)
+        self.assertEqual(resp["error"]["code"], -32602)
+        self.assertIn("query must be a non-empty string", resp["error"]["message"])
+
+    def test_search_docs_nul_byte_query_does_not_error(self) -> None:
+        """A NUL byte inside a query never produces -32603 (load-bearing guard)."""
+        resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 24,
+                "method": "tools/call",
+                "params": {
+                    "name": "search_docs",
+                    "arguments": {"query": "tree\u0000map", "max_results": 10},
+                },
+            }
+        )
+        self.assertIn("result", resp)
 
 
 class TestGetDocTool(unittest.TestCase):
