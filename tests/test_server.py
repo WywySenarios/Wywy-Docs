@@ -24,6 +24,7 @@ import threading
 import time
 import unittest
 from http.client import HTTPConnection, HTTPResponse
+from typing import TypedDict
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -36,18 +37,63 @@ logger = logging.getLogger(__name__)
 
 
 # ===========================================================================
+# JSON-RPC wire types (the subset the tests read/write)
+# ===========================================================================
+
+
+class JsonRpcError(TypedDict):
+    code: int
+    message: str
+
+
+class TextContentItem(TypedDict):
+    type: str
+    text: str
+
+
+class ToolInfo(TypedDict):
+    name: str
+    description: str
+
+
+class JsonRpcResult(TypedDict):
+    content: list[TextContentItem]
+    tools: list[ToolInfo]
+
+
+class JsonRpcResponse(TypedDict):
+    """A JSON-RPC response as consumed by the tests.
+
+    A real response carries exactly one of ``result`` or ``error``; both are
+    declared so tests can read either without Optional-wrapping every access.
+    Responses are only ever read (never constructed as literals), so this is
+    safe.
+    """
+
+    result: JsonRpcResult
+    error: JsonRpcError
+
+
+class JsonRpcRequest(TypedDict, total=False):
+    jsonrpc: str
+    id: int
+    method: str
+    params: dict[str, object]
+
+
+# ===========================================================================
 # Helpers
 # ===========================================================================
 
 
-def _find_free_port() -> int:
+def find_free_port() -> int:
     """Return a random ephemeral port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, 0))
         return s.getsockname()[1]
 
 
-def _create_file(
+def create_file(
     root: str, rel_path: str, content: str = "---\ntitle: X\n---\nbody"
 ) -> str:
     """Create a file at *root*/*rel_path* with *content*.
@@ -61,7 +107,7 @@ def _create_file(
     return full_path
 
 
-def _setup_temp_wywy_root() -> str:
+def setup_temp_wywy_root() -> str:
     """Create a temporary directory that mimics the Wywy-Docs repo layout.
 
     Returns the path to the temp root.
@@ -88,12 +134,12 @@ def _setup_temp_wywy_root_missing(*, docs: bool = False, internal: bool = False)
     return root
 
 
-def _build_test_index(root: str, files: dict[str, str]) -> str:
+def build_test_index(root: str, files: dict[str, str]) -> str:
     """Create sample .mdx *files* (rel_path -> content) under *root* and
     build the FTS5 index.  Returns the database path.
     """
     for rel_path, content in files.items():
-        _create_file(root, rel_path, content)
+        create_file(root, rel_path, content)
 
     from wywy_docs.indexer import build_index
 
@@ -119,7 +165,7 @@ def _with_server(root_dir: str, port: int):
         server.stop()
 
 
-def _verify_metadata(root_dir: str, rel_path: str, *, present: bool) -> None:
+def verify_metadata(root_dir: str, rel_path: str, *, present: bool) -> None:
     """Check whether *rel_path* exists in the ``file_metadata`` table.
 
     Raises an AssertionError if the state does not match *present*.
@@ -139,7 +185,7 @@ def _verify_metadata(root_dir: str, rel_path: str, *, present: bool) -> None:
         conn.close()
 
 
-def _cleanup_ephemeral_files(root_dir: str, rel_paths: list[str]) -> None:
+def cleanup_ephemeral_files(root_dir: str, rel_paths: list[str]) -> None:
     """Remove ephemeral test files and their index rows.
 
     Best-effort: any failure is logged and swallowed so a cleanup
@@ -182,8 +228,8 @@ class MCPClient:
         self.host = host
         self.port = port
         self._sse_conn: HTTPConnection | None = None
-        self._messages_url: str = "/messages"
-        self._response_queue: queue.Queue = queue.Queue()
+        self.messages_url: str = "/messages"
+        self._response_queue: queue.Queue[JsonRpcResponse] = queue.Queue()
         self._reader_stop = threading.Event()
         self._reader_thread: threading.Thread | None = None
 
@@ -210,7 +256,7 @@ class MCPClient:
             elif line == "":
                 # End of an SSE event
                 if event_type == "endpoint" and data_buffer:
-                    self._messages_url = "".join(data_buffer)
+                    self.messages_url = "".join(data_buffer)
                     break
                 event_type = None
                 data_buffer = []
@@ -224,7 +270,7 @@ class MCPClient:
         self._reader_thread.start()
 
         # Perform MCP initialize/initialized handshake.
-        init_result = self.send_message(
+        self.send_message(
             {
                 "jsonrpc": "2.0",
                 "id": 0,
@@ -270,7 +316,7 @@ class MCPClient:
             except Exception:
                 break
 
-    def send_message(self, body: dict) -> dict:
+    def send_message(self, body: JsonRpcRequest) -> JsonRpcResponse:
         """Send a JSON-RPC message and return the parsed JSON-RPC response.
 
         The response is received through the SSE stream (not the POST
@@ -281,7 +327,7 @@ class MCPClient:
         try:
             conn.request(
                 "POST",
-                self._messages_url,
+                self.messages_url,
                 body=json.dumps(body),
                 headers={"Content-Type": "application/json"},
             )
@@ -293,13 +339,13 @@ class MCPClient:
         # Wait for the JSON-RPC response on the SSE stream.
         return self._response_queue.get(timeout=RESPONSE_TIMEOUT)
 
-    def send_notification(self, body: dict) -> None:
+    def send_notification(self, body: JsonRpcRequest) -> None:
         """Send a JSON-RPC notification (fire-and-forget, no response expected)."""
         conn = HTTPConnection(self.host, self.port, timeout=30)
         try:
             conn.request(
                 "POST",
-                self._messages_url,
+                self.messages_url,
                 body=json.dumps(body),
                 headers={"Content-Type": "application/json"},
             )
@@ -349,7 +395,7 @@ class ServerProcess:
     def __init__(self, root_dir: str, port: int) -> None:
         self.root_dir = root_dir
         self.port = port
-        self.process: subprocess.Popen | None = None
+        self.process: subprocess.Popen[bytes] | None = None
 
     def start(self) -> None:
         """Start the server and wait for it to become ready."""
@@ -373,15 +419,18 @@ class ServerProcess:
 
     def _wait_for_server(self) -> None:
         """Poll the /sse endpoint until it responds."""
+        process = self.process
+        if process is None:
+            raise RuntimeError("Server process was not started")
         deadline = time.time() + SERVER_TIMEOUT
         last_error: Exception | None = None
         while time.time() < deadline:
             # Quick check: if process exited early, abort.
-            ret = self.process.poll()
+            ret = process.poll()
             if ret is not None:
                 raise RuntimeError(
                     f"Server process exited early with code {ret}. "
-                    f"stderr: {self._read_stderr()}"
+                    f"stderr: {self.read_stderr()}"
                 )
             try:
                 resp = urlopen(f"http://{HOST}:{self.port}/sse", timeout=0.5)
@@ -393,10 +442,10 @@ class ServerProcess:
         raise RuntimeError(
             f"Server did not start within {SERVER_TIMEOUT}s. "
             f"Last error: {last_error}. "
-            f"stderr: {self._read_stderr()}"
+            f"stderr: {self.read_stderr()}"
         )
 
-    def _read_stderr(self) -> str:
+    def read_stderr(self) -> str:
         """Read any captured stderr output from the process."""
         if self.process and self.process.stderr:
             try:
@@ -427,8 +476,8 @@ class TestServerEndpoints(unittest.TestCase):
     """Server exposes the standard MCP SSE transport endpoints."""
 
     def setUp(self) -> None:
-        self.root_dir = _setup_temp_wywy_root()
-        self.port = _find_free_port()
+        self.root_dir = setup_temp_wywy_root()
+        self.port = find_free_port()
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root_dir, ignore_errors=True)
@@ -452,7 +501,7 @@ class TestServerEndpoints(unittest.TestCase):
             conn = HTTPConnection(HOST, self.port, timeout=5)
             conn.request(
                 "POST",
-                client._messages_url,  # e.g., /messages?session_id=xxx
+                client.messages_url,  # e.g., /messages?session_id=xxx
                 body=json.dumps({"jsonrpc": "2.0", "id": 99, "method": "ping"}),
                 headers={"Content-Type": "application/json"},
             )
@@ -552,9 +601,9 @@ class TestToolsList(unittest.TestCase):
     """The ``tools/list`` request returns the available tools."""
 
     def setUp(self) -> None:
-        self.root_dir = _setup_temp_wywy_root()
-        self.port = _find_free_port()
-        _build_test_index(
+        self.root_dir = setup_temp_wywy_root()
+        self.port = find_free_port()
+        build_test_index(
             self.root_dir,
             {"docs/dummy.mdx": "---\ntitle: Dummy\n---\nPlaceholder content."},
         )
@@ -588,9 +637,9 @@ class TestSearchDocsTool(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.root_dir = _setup_temp_wywy_root()
-        cls.port = _find_free_port()
-        _build_test_index(
+        cls.root_dir = setup_temp_wywy_root()
+        cls.port = find_free_port()
+        build_test_index(
             cls.root_dir,
             {
                 "docs/hello.mdx": "---\ntitle: Hello World\n---\nThis is a shared_term greeting document.",
@@ -771,9 +820,9 @@ class TestGetDocTool(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.root_dir = _setup_temp_wywy_root()
-        cls.port = _find_free_port()
-        _build_test_index(
+        cls.root_dir = setup_temp_wywy_root()
+        cls.port = find_free_port()
+        build_test_index(
             cls.root_dir,
             {
                 "docs/test.mdx": (
@@ -854,10 +903,10 @@ class TestAutoBuildIndex(unittest.TestCase):
     """Server auto-builds the FTS5 index on startup if missing."""
 
     def setUp(self) -> None:
-        self.root_dir = _setup_temp_wywy_root()
-        self.port = _find_free_port()
+        self.root_dir = setup_temp_wywy_root()
+        self.port = find_free_port()
         # Create a doc file but do NOT build the index — server should do it.
-        _create_file(
+        create_file(
             self.root_dir,
             "docs/auto.mdx",
             "---\ntitle: Auto\n---\nServer-built content.",
@@ -886,7 +935,7 @@ class TestAutoBuildIndex(unittest.TestCase):
     def test_start_with_existing_index_does_not_reindex(self) -> None:
         """Starting with existing database does NOT re-import the indexer."""
         # Pre-build the index with exactly one document.
-        _build_test_index(
+        build_test_index(
             self.root_dir,
             {"docs/initial.mdx": "---\ntitle: Initial\n---\nOriginal content"},
         )
@@ -929,7 +978,7 @@ class TestEnsureIndexMissingDirectories(unittest.TestCase):
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 
         with self.assertLogs(server_mod.logger, level="WARNING") as cm:
-            server_mod._ensure_index(self.root_dir)
+            server_mod._ensure_index(self.root_dir)  # type: ignore[reportPrivateUsage]
 
         log_text = "\n".join(cm.output)
         self.assertIn("docs directory does not exist", log_text)
@@ -967,7 +1016,7 @@ class TestServerMissingDirectories(unittest.TestCase):
         # and create an empty index.  The wywy_docs/ dir is created by
         # ``_ensure_index`` itself.
         self.root_dir = _setup_temp_wywy_root_missing()
-        self.port = _find_free_port()
+        self.port = find_free_port()
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root_dir, ignore_errors=True)
@@ -976,12 +1025,12 @@ class TestServerMissingDirectories(unittest.TestCase):
         """Starting the server with neither section dir present does not crash."""
         # _with_server calls server.start(), which raises RuntimeError if
         # the process exits early.
-        with _with_server(self.root_dir, self.port) as server:
+        with _with_server(self.root_dir, self.port):
             pass
 
     def test_index_created_empty_without_dirs(self) -> None:
         """Missing sections still produce a ``docs_fts`` table with zero rows."""
-        with _with_server(self.root_dir, self.port) as server:
+        with _with_server(self.root_dir, self.port):
             db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
             self.assertTrue(os.path.isfile(db_path))
             conn = sqlite3.connect(db_path)
@@ -993,7 +1042,7 @@ class TestServerMissingDirectories(unittest.TestCase):
 
     def test_search_docs_returns_empty_when_index_empty(self) -> None:
         """search_docs on an empty index returns ``[]`` for a valid query."""
-        with _with_server(self.root_dir, self.port) as server:
+        with _with_server(self.root_dir, self.port):
             client = MCPClient(HOST, self.port)
             client.connect()
             try:
@@ -1019,7 +1068,7 @@ class TestServerMissingDirectories(unittest.TestCase):
     def test_mixed_state_warns_for_missing_dir_only(self) -> None:
         """With only ``docs/`` present: warn about ``internal/`` only and
         index files from the existing ``docs/`` directory."""
-        _create_file(
+        create_file(
             self.root_dir,
             "docs/only.mdx",
             "---\ntitle: Only\n---\nZephyrflorabranch content for searching.",
@@ -1048,7 +1097,7 @@ class TestServerMissingDirectories(unittest.TestCase):
             finally:
                 client.close()
 
-        stderr = server._read_stderr()
+        stderr = server.read_stderr()
         self.assertIn("internal directory does not exist", stderr)
         self.assertNotIn("docs directory does not exist", stderr)
 
@@ -1057,9 +1106,9 @@ class TestServerStartupTime(unittest.TestCase):
     """Server starts quickly with an existing database."""
 
     def setUp(self) -> None:
-        self.root_dir = _setup_temp_wywy_root()
-        self.port = _find_free_port()
-        _build_test_index(
+        self.root_dir = setup_temp_wywy_root()
+        self.port = find_free_port()
+        build_test_index(
             self.root_dir,
             {"docs/bench.mdx": "---\ntitle: Bench\n---\nBenchmark document."},
         )

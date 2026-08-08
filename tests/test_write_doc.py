@@ -11,21 +11,22 @@ import json
 import os
 import shutil
 import tempfile
-import time
 import unittest
+from typing import cast
 from unittest.mock import patch
 
 import yaml
 
 from tests.test_server import (
+    JsonRpcResponse,
     MCPClient,
     ServerProcess,
-    _build_test_index,
-    _cleanup_ephemeral_files,
-    _create_file,
-    _find_free_port,
-    _setup_temp_wywy_root,
-    _verify_metadata,
+    build_test_index,
+    cleanup_ephemeral_files,
+    create_file,
+    find_free_port,
+    setup_temp_wywy_root,
+    verify_metadata,
 )
 
 HOST = "127.0.0.1"
@@ -34,14 +35,14 @@ HOST = "127.0.0.1"
 # ── Frontmatter parser helper ──────────────────────────────────────────
 
 
-def _parse_frontmatter(filepath: str) -> tuple[dict, str]:
+def _parse_frontmatter(filepath: str) -> tuple[dict[str, object], str]:
     """Read *filepath* and return ``(frontmatter_dict, body_text)``."""
     with open(filepath) as f:
         raw = f.read()
     if raw.startswith("---"):
         parts = raw.split("---", 2)
         if len(parts) >= 3:
-            fm = yaml.safe_load(parts[1]) or {}
+            fm = cast("dict[str, object]", yaml.safe_load(parts[1]) or {})
             body = parts[2].strip()
             return dict(fm), body
     return {}, raw.strip()
@@ -62,9 +63,9 @@ class TestWriteDocTool(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.root_dir = _setup_temp_wywy_root()
-        cls.port = _find_free_port()
-        _build_test_index(
+        cls.root_dir = setup_temp_wywy_root()
+        cls.port = find_free_port()
+        build_test_index(
             cls.root_dir,
             {"docs/init.mdx": "---\ntitle: Init\n---\nInitial doc for setup."},
         )
@@ -88,7 +89,7 @@ class TestWriteDocTool(unittest.TestCase):
         """
         name = self._testMethodName
         rel_paths = [f"{section}/{name}.mdx" for section in ("docs", "internal")]
-        _cleanup_ephemeral_files(self.root_dir, rel_paths)
+        cleanup_ephemeral_files(self.root_dir, rel_paths)
 
     # ── JSON-RPC id counter ────────────────────────────────────────────
 
@@ -105,8 +106,8 @@ class TestWriteDocTool(unittest.TestCase):
         section: str,
         path: str,
         content: str,
-        frontmatter: dict | None = None,
-    ) -> dict:
+        frontmatter: dict[str, object] | None = None,
+    ) -> JsonRpcResponse:
         """Send a ``write_doc`` tool-call and return the JSON-RPC response."""
         return self.client.send_message(
             {
@@ -158,7 +159,7 @@ class TestWriteDocTool(unittest.TestCase):
         *last_updated*, and keeps existing frontmatter keys unless
         overridden."""
         name = self._testMethodName
-        _create_file(
+        create_file(
             self.root_dir,
             f"docs/{name}.mdx",
             "---\n"
@@ -170,14 +171,12 @@ class TestWriteDocTool(unittest.TestCase):
             "Original body.",
         )
 
-        before = time.time()
         resp = self._call(
             "docs",
             name,
             "# Updated body",
             frontmatter={"title": "Updated"},
         )
-        after = time.time()
         self.assertIn("result", resp)
         result = json.loads(resp["result"]["content"][0]["text"])
         self.assertEqual(result["path"], f"docs/{name}.mdx")
@@ -203,24 +202,22 @@ class TestWriteDocTool(unittest.TestCase):
         """Updating a doc that has no *published* field sets *published*
         to the current time."""
         name = self._testMethodName
-        _create_file(
+        create_file(
             self.root_dir,
             f"docs/{name}.mdx",
             "---\ntitle: No Published\ndesc: missing-pub\n---\nBody.",
         )
 
-        before = time.time()
         resp = self._call(
             "docs",
             name,
             "# Updated",
             frontmatter={"title": "Now Has Published"},
         )
-        after = time.time()
         self.assertIn("result", resp)
 
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        fm, body = _parse_frontmatter(full_path)
+        fm, _body = _parse_frontmatter(full_path)
         self.assertIn("published", fm)
         self.assertIn("last_updated", fm)
         self.assertEqual(fm.get("title"), "Now Has Published")
@@ -233,7 +230,7 @@ class TestWriteDocTool(unittest.TestCase):
         """Updating a doc with no frontmatter at all succeeds and sets
         both *published* and *last_updated* fresh."""
         name = self._testMethodName
-        _create_file(
+        create_file(
             self.root_dir,
             f"docs/{name}.mdx",
             "Body with no frontmatter at all.",
@@ -379,7 +376,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
         self.root_dir = tempfile.mkdtemp()
         for d in ("docs", "internal", "wywy_docs"):
             os.makedirs(os.path.join(self.root_dir, d), exist_ok=True)
-        _create_file(
+        create_file(
             self.root_dir,
             "docs/initial.mdx",
             "---\ntitle: Initial\n---\nInitial body.",
@@ -396,7 +393,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
         )
 
         # Quick sanity: file_metadata has the initial entry
-        _verify_metadata(self.root_dir, "docs/initial.mdx", present=True)
+        verify_metadata(self.root_dir, "docs/initial.mdx", present=True)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root_dir, ignore_errors=True)
@@ -410,7 +407,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
         deletes the ``file_metadata`` entry for the just-written path."""
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 
-        server_mod._ROOT_DIR = self.root_dir
+        server_mod._ROOT_DIR = self.root_dir  # type: ignore[reportPrivateUsage]
 
         with patch(
             "wywy_docs.server.build_index",
@@ -426,7 +423,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
             self.assertIn("file written but index update failed", str(ctx.exception))
 
         # The file_metadata entry for the new path must have been removed.
-        _verify_metadata(self.root_dir, "docs/fail-test.mdx", present=False)
+        verify_metadata(self.root_dir, "docs/fail-test.mdx", present=False)
 
 
 if __name__ == "__main__":

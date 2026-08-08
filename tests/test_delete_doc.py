@@ -14,14 +14,15 @@ import unittest
 from unittest.mock import patch
 
 from tests.test_server import (
+    JsonRpcResponse,
     MCPClient,
     ServerProcess,
-    _build_test_index,
-    _cleanup_ephemeral_files,
-    _create_file,
-    _find_free_port,
-    _setup_temp_wywy_root,
-    _verify_metadata,
+    build_test_index,
+    cleanup_ephemeral_files,
+    create_file,
+    find_free_port,
+    setup_temp_wywy_root,
+    verify_metadata,
 )
 
 HOST = "127.0.0.1"
@@ -42,8 +43,8 @@ class TestDeleteDocTool(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.root_dir = _setup_temp_wywy_root()
-        cls.port = _find_free_port()
+        cls.root_dir = setup_temp_wywy_root()
+        cls.port = find_free_port()
         cls.server = ServerProcess(cls.root_dir, cls.port)
         cls.server.start()
         cls.client = MCPClient(HOST, cls.port)
@@ -73,7 +74,7 @@ class TestDeleteDocTool(unittest.TestCase):
         if name in contents:
             rel_path, content = contents[name]
             self._created_files = [rel_path]
-            _build_test_index(self.root_dir, {rel_path: content})
+            build_test_index(self.root_dir, {rel_path: content})
 
     def tearDown(self) -> None:
         """Ensure this test's ephemeral files no longer exist.
@@ -82,7 +83,7 @@ class TestDeleteDocTool(unittest.TestCase):
         entries in ``docs_fts`` and ``file_metadata`` so state does not
         leak between test methods.
         """
-        _cleanup_ephemeral_files(self.root_dir, self._created_files)
+        cleanup_ephemeral_files(self.root_dir, self._created_files)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -100,7 +101,7 @@ class TestDeleteDocTool(unittest.TestCase):
 
     # ── MCP call helper ────────────────────────────────────────────────
 
-    def _call(self, path: str) -> dict:
+    def _call(self, path: str) -> JsonRpcResponse:
         """Send a ``delete_doc`` tool-call and return the JSON-RPC response."""
         return self.client.send_message(
             {
@@ -154,7 +155,7 @@ class TestDeleteDocTool(unittest.TestCase):
         self.assertFalse(os.path.isfile(full_path))
 
         # Metadata entry removed
-        _verify_metadata(self.root_dir, path_arg, present=False)
+        verify_metadata(self.root_dir, path_arg, present=False)
 
         # Not searchable
         self._verify_not_searchable(f"UNIQUE_TERM_{name}")
@@ -241,7 +242,7 @@ class TestDeleteDocTool(unittest.TestCase):
         self.assertFalse(os.path.isfile(full_path))
 
         # Metadata entry removed
-        _verify_metadata(self.root_dir, path_arg, present=False)
+        verify_metadata(self.root_dir, path_arg, present=False)
 
         # Not searchable
         self._verify_not_searchable(f"INTERNAL_UNIQUE_{name}")
@@ -274,7 +275,7 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
         self.root_dir = tempfile.mkdtemp()
         for d in ("docs", "internal", "wywy_docs"):
             os.makedirs(os.path.join(self.root_dir, d), exist_ok=True)
-        _create_file(
+        create_file(
             self.root_dir,
             "docs/test_delete_os_remove_failure.mdx",
             "---\ntitle: OS Remove Failure\n---\nContent.",
@@ -305,7 +306,7 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
         ``OSError``), the tool raises ``RuntimeError`` → -32603."""
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 
-        server_mod._ROOT_DIR = self.root_dir
+        server_mod._ROOT_DIR = self.root_dir  # type: ignore[reportPrivateUsage]
 
         with patch(
             "wywy_docs.server.os.remove",
