@@ -1,5 +1,4 @@
-wywy_docs/docs_index.db
-wywy_docs/server.pid
+wywy_docs/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
