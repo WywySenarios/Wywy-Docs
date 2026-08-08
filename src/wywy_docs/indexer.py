@@ -7,9 +7,19 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import Any
+from typing import TypedDict, cast
 
 import yaml
+
+
+class ParsedFile(TypedDict):
+    """Structured result of :func:`parse_file`."""
+
+    title: str
+    path: str
+    content: str
+    frontmatter: dict[str, object]
+    section: str | None
 
 
 def scan_files(root_dirs: list[str]) -> list[str]:
@@ -26,7 +36,7 @@ def scan_files(root_dirs: list[str]) -> list[str]:
     return sorted(files)
 
 
-def parse_file(filepath: str, root: str) -> dict[str, Any]:
+def parse_file(filepath: str, root: str) -> ParsedFile:
     """Parse a single ``.mdx`` file.
 
     Parameters
@@ -53,7 +63,7 @@ def parse_file(filepath: str, root: str) -> dict[str, Any]:
     with open(filepath, "r") as f:
         raw = f.read()
 
-    frontmatter: dict[str, Any] = {}
+    frontmatter: dict[str, object] = {}
     title: str | None = None
     content = raw
 
@@ -66,8 +76,8 @@ def parse_file(filepath: str, root: str) -> dict[str, Any]:
                 try:
                     parsed = yaml.safe_load(fm_text)
                     if isinstance(parsed, dict):
-                        frontmatter = parsed
-                        title = frontmatter.get("title")
+                        frontmatter = cast(dict[str, object], parsed)
+                        title = cast(str | None, frontmatter.get("title"))
                 except yaml.YAMLError:
                     frontmatter = {}
                     content = raw

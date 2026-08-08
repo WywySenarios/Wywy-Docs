@@ -13,10 +13,11 @@ import os
 import sqlite3
 import tempfile
 import time
+from typing import Callable, cast
 
 import yaml
 from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.tools.tool_manager import ToolError
+from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import McpError
 from mcp.types import (
     CallToolRequest,
@@ -155,6 +156,7 @@ def search_docs(query: str, max_results: int = 10):
         raise ValueError("query must be a non-empty string")
     sanitized = _sanitize_query(query)
     db = _db_path()
+    conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(db)
         cur = conn.execute(
@@ -182,7 +184,8 @@ def search_docs(query: str, max_results: int = 10):
     except sqlite3.OperationalError as e:
         raise RuntimeError(str(e))
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 @mcp.tool()
@@ -205,7 +208,10 @@ def get_doc(path: str):
 
 @mcp.tool()
 def write_doc(
-    section: Section, path: str, content: str, frontmatter: dict | None = None
+    section: Section,
+    path: str,
+    content: str,
+    frontmatter: dict[str, object] | None = None,
 ):
     """Create or update a documentation file.
 
@@ -235,7 +241,7 @@ def write_doc(
         raise ValueError(str(e))
 
     # ── Read existing file for merge ────────────────────────────────
-    existing_fm: dict = {}
+    existing_fm: dict[str, object] = {}
     if os.path.isfile(abs_path):
         try:
             parsed = parse_file(abs_path, root=_ROOT_DIR)
@@ -254,7 +260,8 @@ def write_doc(
         if isinstance(pub_val, str):
             published = pub_val
         elif hasattr(pub_val, "isoformat"):
-            published = pub_val.isoformat()
+            iso_format = cast(Callable[[], str], getattr(pub_val, "isoformat"))
+            published = iso_format()
         else:
             published = str(pub_val)
     else:
@@ -345,6 +352,7 @@ def delete_doc(path: str):
     # Clean index entries
     rel_path = f"{section}/{path}"
     db = _db_path()
+    conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(db)
         conn.execute("DELETE FROM docs_fts WHERE path = ?", (rel_path,))
@@ -353,7 +361,8 @@ def delete_doc(path: str):
     except sqlite3.OperationalError as e:
         raise RuntimeError(str(e))
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
     return json.dumps({"path": rel_path, "deleted": True})
 
@@ -394,7 +403,7 @@ async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
 
 
 # Replace the default CallToolRequest handler with our custom one.
-mcp._mcp_server.request_handlers[CallToolRequest] = _call_tool_handler
+mcp._mcp_server.request_handlers[CallToolRequest] = _call_tool_handler  # type: ignore[reportPrivateUsage]
 
 
 # ── Entry point ───────────────────────────────────────────────────────
@@ -408,7 +417,7 @@ def main() -> None:
     parser.add_argument("--port", type=int)
     args, _ = parser.parse_known_args()
     global _ROOT_DIR
-    _ROOT_DIR = os.environ.get(
+    _ROOT_DIR = os.environ.get(  # type: ignore[reportConstantRedefinition]
         "WYWY_DOCS_DIR", os.environ.get("WYWY_ROOT", os.getcwd())
     )
     _ensure_index(_ROOT_DIR)

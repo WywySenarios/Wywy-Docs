@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, model_validator
 
@@ -18,7 +18,9 @@ class DocFrontmatter(BaseModel):
 
     model_config = {"extra": "allow"}  # type: ignore[assignment]
 
-    def __init__(self, _data: dict | None = None, **kwargs: object) -> None:
+    def __init__(
+        self, _data: dict[str, object] | None = None, **kwargs: object
+    ) -> None:
         """Accept a positional dict as an alternative to ``**kwargs``."""
         if _data is not None:
             kwargs = {**_data, **kwargs}
@@ -28,9 +30,13 @@ class DocFrontmatter(BaseModel):
     @classmethod
     def reject_reserved_fields(cls, data: object) -> object:
         """Raise ``ValueError`` if ``published`` or ``last_updated`` are present."""
-        if isinstance(data, dict):
-            for key in ("published", "last_updated"):
-                if key in data:
-                    msg = f"'{key}' is a reserved frontmatter key and cannot be set manually"
-                    raise ValueError(msg)
-        return data
+        if not isinstance(data, dict):
+            return data
+        data_dict = cast(dict[str, object], data)
+        for key in ("published", "last_updated"):
+            if key in data_dict:
+                msg = (
+                    f"'{key}' is a reserved frontmatter key and cannot be set manually"
+                )
+                raise ValueError(msg)
+        return data_dict
