@@ -1,6 +1,7 @@
 ---
 title: Bash Scripting Conventions
-published: 2026-06-05T00:00:00
+published: '2026-06-05T00:00:00'
+last_updated: '2026-08-07T02:50:58'
 ---
 
 ## Shebang
@@ -68,6 +69,20 @@ SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 ```
 
 Use `SCRIPT_DIR` to reference sibling files (configs, templates, subdirectories). Do not rely on `$0`, relative paths from `$PWD`, or `cd "$(dirname ...)" && pwd` without symlink resolution.
+
+## Temporary files
+
+Create temp directories with `mktemp -d` and temp files with `mktemp` — never hardcode fixed paths under `/tmp`. Predictable paths collide across concurrent runs and are a symlink-attack vector.
+
+Clean up with `trap ... EXIT` so temp dirs are removed on success AND failure. `set -e` aborts before a trailing `rm` runs, so a bare `rm -f` at the end of the script leaks the temp dir on error — the trap is the cleanup, not the trailing `rm`.
+
+```bash
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+sed -e "s|{{VAR}}|$value|g" "$TEMPLATE" >"$TMP_DIR/rendered.yaml"
+scp "$TMP_DIR/rendered.yaml" "$host:~/"
+```
 
 ## Exit codes
 
