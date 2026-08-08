@@ -6,9 +6,16 @@ requires-python = ">=3.10"
 dependencies = [
     "mcp",
     "pydantic>=2.0",
+    "pyright>=1.1.411",
     "pyyaml",
     "uvicorn",
 ]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+pythonVersion = "3.12"
+useLibraryCodeForTypes = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
