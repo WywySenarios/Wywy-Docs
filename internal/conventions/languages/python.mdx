@@ -1,6 +1,7 @@
 ---
 title: Python Conventions
-published: 2026-06-05T00:00:00
+published: "2026-06-05T00:00:00"
+last_updated: "2026-08-08T19:20:36"
 ---
 
 ## Python version
@@ -72,20 +73,25 @@ except json.JSONDecodeError:
 
 ## Testing
 
-- **unittest.TestCase** for Django app code and general Python tests.
-- Test method names MUST use `lower_snake_case` (e.g., `test_valid_credentials_return_200`).
-- Test files named `tests.py` inside Django apps or `test_*.py` in test directories.
-- Use `setUp()`/`tearDown()` for fixture setup; `self.subTest()` for parameterized tests.
-- `unittest.mock.MagicMock` and `@patch` for mocking.
+- **pytest** is the primary test framework for general Python code. Test files are named `test_*.py`.
+- **unittest.TestCase** for Django app code.
+- Test names MUST use `lower_snake_case` (e.g., `test_valid_credentials_return_200`).
+- Use pytest fixtures for setup/teardown and `@pytest.mark.parametrize` for parameterized tests.
+- Use `unittest.mock.MagicMock` and `@patch` for mocking; prefer pytest's `monkeypatch` fixture for patching attributes or environment variables.
 
 ```python
-class TestSessionCreation(TestCase):
-    def setUp(self):
-        self.client = Client()
+import pytest
 
-    def test_valid_credentials_return_200(self):
-        response = self.client.post("/auth/login", ...)
-        self.assertEqual(response.status_code, 200)
+
+@pytest.fixture
+def client():
+    return Client()
+
+
+@pytest.mark.parametrize("email,password", [("a@example.com", "secret123")])
+def test_valid_credentials_return_200(client, email, password):
+    response = client.post("/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200
 ```
 
 ## Async
@@ -109,11 +115,13 @@ npx pyright <file_or_directory>
 Before running pyright (or working with Python code), ensure the project's dependencies are available:
 
 1. Install **uv** (fast Python package installer):
+
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
 2. Create a virtual environment and install dependencies:
+
    ```bash
    cd apps/django
    uv venv .venv
@@ -129,6 +137,6 @@ Pyright must be run with `--pythonpath` pointing to the virtual environment's in
 
 ## Related tech stack
 
-| Framework | Convention file |
-|-----------|----------------|
+| Framework | Convention file                                     |
+| --------- | --------------------------------------------------- |
 | Django    | [`tech-stack/django.mdx`](../tech-stack/django.mdx) |
