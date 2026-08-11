@@ -1,0 +1,14 @@
+# Pre-commit hooks — Wywy-Docs
+#
+# Install pre-commit (https://pre-commit.com), then run:
+#   pre-commit install
+#
+# Ruff config lives in pyproject.toml under [tool.ruff].
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.21
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format

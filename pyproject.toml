@@ -17,6 +17,14 @@ include = ["src", "tests"]
 pythonVersion = "3.12"
 useLibraryCodeForTypes = true
 
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["wywy_docs*"]
@@ -27,5 +35,6 @@ build-backend = "setuptools.build_meta:__legacy__"
 
 [dependency-groups]
 dev = [
+    "pre-commit",
     "pytest>=9.1.1",
 ]
