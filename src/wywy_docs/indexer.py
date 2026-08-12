@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from pathlib import Path
 from typing import TypedDict, cast
 
 import yaml
@@ -32,7 +33,7 @@ def scan_files(root_dirs: list[str]) -> list[str]:
         for root, _dirs, filenames in os.walk(root_dir, followlinks=True):
             for fn in filenames:
                 if fn.endswith(".mdx"):
-                    files.append(os.path.join(root, fn))
+                    files.append(str(Path(root) / fn))
     return sorted(files)
 
 
@@ -60,7 +61,7 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
                             ``"internal"`` if path starts with ``internal/``,
                             ``None`` otherwise.
     """
-    with open(filepath, "r") as f:
+    with Path(filepath).open() as f:
         raw = f.read()
 
     frontmatter: dict[str, object] = {}
@@ -83,7 +84,7 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
                     content = raw
 
     if title is None:
-        title = os.path.splitext(os.path.basename(filepath))[0]
+        title = Path(filepath).stem
 
     rel_path = os.path.relpath(filepath, root)
 
@@ -113,7 +114,7 @@ def build_index(root_dirs: list[str], db_path: str) -> None:
 
     # Determine the common root for relative path computation
     if len(root_dirs) == 1:
-        root = os.path.dirname(root_dirs[0])
+        root = str(Path(root_dirs[0]).parent)
     else:
         root = os.path.commonpath(root_dirs)
 
@@ -147,7 +148,7 @@ def build_index(root_dirs: list[str], db_path: str) -> None:
 
     for fp in files:
         rel_path = os.path.relpath(fp, root)
-        mtime = os.stat(fp).st_mtime_ns
+        mtime = Path(fp).stat().st_mtime_ns
 
         # Skip unchanged files
         if rel_path in known and known[rel_path] == mtime:
@@ -189,10 +190,10 @@ def main(root_dir: str | None = None) -> None:
         location.
     """
     if root_dir is None:
-        root_dir = os.getcwd()
-    docs_dir = os.path.join(root_dir, "docs")
-    internal_dir = os.path.join(root_dir, "internal")
-    db_path = os.path.join(root_dir, "wywy_docs", "docs_index.db")
+        root_dir = str(Path.cwd())
+    docs_dir = str(Path(root_dir) / "docs")
+    internal_dir = str(Path(root_dir) / "internal")
+    db_path = str(Path(root_dir) / "wywy_docs" / "docs_index.db")
     build_index(root_dirs=[docs_dir, internal_dir], db_path=db_path)
 
 

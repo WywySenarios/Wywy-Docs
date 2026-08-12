@@ -303,7 +303,7 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
         shutil.rmtree(self.root_dir, ignore_errors=True)
 
     def test_delete_os_remove_failure_returns_error(self) -> None:
-        """When ``os.remove`` raises ``PermissionError``, the tool errors.
+        """When the file unlink raises ``PermissionError``, the tool errors.
 
         The ``PermissionError`` is a subclass of ``OSError``; the tool
         raises ``RuntimeError`` → -32603.
@@ -313,7 +313,7 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
         server_mod._ROOT_DIR = self.root_dir  # type: ignore[reportPrivateUsage]
 
         with patch(
-            "wywy_docs.server.os.remove",
+            "pathlib.Path.unlink",
             side_effect=PermissionError("Permission denied"),
         ):
             with pytest.raises(RuntimeError) as ctx:

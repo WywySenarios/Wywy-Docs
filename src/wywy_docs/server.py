@@ -14,6 +14,7 @@ import sqlite3
 import tempfile
 import time
 from datetime import date, datetime
+from pathlib import Path
 
 import yaml
 from mcp.server.fastmcp import FastMCP
@@ -45,14 +46,14 @@ mcp = FastMCP("wywy-docs", message_path="/messages/")
 
 
 def _db_path(root_dir: str | None = None) -> str:
-    return os.path.join(root_dir or _ROOT_DIR, "wywy_docs", "docs_index.db")
+    return str(Path(root_dir or _ROOT_DIR) / "wywy_docs" / "docs_index.db")
 
 
 def _section_dirs(root_dir: str) -> tuple[str, str]:
     """Return the conventional ``docs/`` and ``internal/`` paths under *root_dir*."""
     return (
-        os.path.join(root_dir, "docs"),
-        os.path.join(root_dir, "internal"),
+        str(Path(root_dir) / "docs"),
+        str(Path(root_dir) / "internal"),
     )
 
 
@@ -63,12 +64,12 @@ def _ensure_index(root_dir: str) -> None:
     the index is still created, empty.
     """
     db = _db_path(root_dir)
-    if not os.path.isfile(db):
-        os.makedirs(os.path.dirname(db), exist_ok=True)
+    if not Path(db).is_file():
+        Path(db).parent.mkdir(parents=True, exist_ok=True)
         docs_dir, internal_dir = _section_dirs(root_dir)
-        if not os.path.isdir(docs_dir):
+        if not Path(docs_dir).is_dir():
             logger.warning("docs directory does not exist: %s", docs_dir)
-        if not os.path.isdir(internal_dir):
+        if not Path(internal_dir).is_dir():
             logger.warning("internal directory does not exist: %s", internal_dir)
         build_index(root_dirs=[docs_dir, internal_dir], db_path=db)
 
@@ -137,8 +138,8 @@ def _resolve_section_path(section: str, path: str) -> str:
         ValueError: If the resolved path escapes the section directory.
 
     """
-    section_dir = os.path.join(_ROOT_DIR, section)
-    abs_path = os.path.join(section_dir, path)
+    section_dir = str(Path(_ROOT_DIR) / section)
+    abs_path = str(Path(section_dir) / path)
     real_abs = os.path.realpath(abs_path)
     real_prefix = os.path.realpath(section_dir)
     if not real_abs.startswith(real_prefix + "/") and real_abs != real_prefix:
@@ -203,8 +204,8 @@ def get_doc(path: str):
 
     """
     path = _normalize_doc_path(path)
-    abs_path = os.path.join(_ROOT_DIR, path)
-    if not os.path.isfile(abs_path):
+    abs_path = str(Path(_ROOT_DIR) / path)
+    if not Path(abs_path).is_file():
         raise ValueError("document not found")
     parsed = parse_file(abs_path, root=_ROOT_DIR)
     return json.dumps(
@@ -234,8 +235,8 @@ def write_doc(
     abs_path = _resolve_section_path(section, path)
 
     # Check parent directory exists
-    parent = os.path.dirname(abs_path)
-    if not os.path.isdir(parent):
+    parent = Path(abs_path).parent
+    if not parent.is_dir():
         raise ValueError("parent directory does not exist")
 
     # Normalise frontmatter
@@ -250,7 +251,7 @@ def write_doc(
 
     # ── Read existing file for merge ────────────────────────────────
     existing_fm: dict[str, object] = {}
-    if os.path.isfile(abs_path):
+    if Path(abs_path).is_file():
         try:
             parsed = parse_file(abs_path, root=_ROOT_DIR)
             existing_fm = parsed["frontmatter"]
@@ -296,10 +297,10 @@ def write_doc(
 
     # Atomic write: tempfile in same directory + os.rename
     try:
-        fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(abs_path))
+        fd, tmp_path = tempfile.mkstemp(dir=Path(abs_path).parent)
         with os.fdopen(fd, "w") as f:
             f.write(full_content)
-        os.rename(tmp_path, abs_path)
+        Path(tmp_path).rename(abs_path)
     except OSError as e:
         raise RuntimeError(str(e))
 
@@ -351,7 +352,7 @@ def delete_doc(path: str):
 
     # Delete file (idempotent: already gone → success)
     try:
-        os.remove(abs_path)
+        Path(abs_path).unlink()
     except FileNotFoundError:
         pass
     except OSError as e:
@@ -427,7 +428,7 @@ def main() -> None:
     args, _ = parser.parse_known_args()
     global _ROOT_DIR
     _ROOT_DIR = os.environ.get(  # type: ignore[reportConstantRedefinition]
-        "WYWY_DOCS_DIR", os.environ.get("WYWY_ROOT", os.getcwd())
+        "WYWY_DOCS_DIR", os.environ.get("WYWY_ROOT", str(Path.cwd()))
     )
     _ensure_index(_ROOT_DIR)
     port = args.port if args.port is not None else int(os.environ.get("PORT", "2530"))
