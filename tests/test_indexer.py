@@ -10,21 +10,26 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 
 from wywy_docs.indexer import build_index, main, parse_file, scan_files
 
 
 def _create_file(
-    root: str, rel_path: str, content: str = "---\ntitle: X\n---\nbody",
+    root: str,
+    rel_path: str,
+    content: str = "---\ntitle: X\n---\nbody",
 ) -> str:
-    """Create a file at *root*/*rel_path* with *content*, creating parent
-    directories as needed.  Returns the absolute path to the created file.
+    """Create a file at *root*/*rel_path* with *content*.
+
+    Creates parent directories as needed.  Returns the absolute path to
+    the created file.
     """
-    full_path = os.path.join(root, rel_path)
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    with open(full_path, "w") as f:
+    full_path = Path(root) / rel_path
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    with full_path.open("w") as f:
         f.write(content)
-    return full_path
+    return str(full_path)
 
 
 # ===========================================================================
@@ -49,8 +54,8 @@ class TestScanFiles(unittest.TestCase):
 
             result = scan_files(
                 [
-                    os.path.join(tmpdir, "docs"),
-                    os.path.join(tmpdir, "internal"),
+                    str(Path(tmpdir) / "docs"),
+                    str(Path(tmpdir) / "internal"),
                 ],
             )
             assert len(result) == 3
@@ -60,12 +65,12 @@ class TestScanFiles(unittest.TestCase):
     def test_scan_files_empty_directories(self) -> None:
         """Returns an empty list when no ``.mdx`` files exist."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            docs = os.path.join(tmpdir, "docs")
-            internal = os.path.join(tmpdir, "internal")
-            os.makedirs(docs)
-            os.makedirs(internal)
+            docs = Path(tmpdir) / "docs"
+            internal = Path(tmpdir) / "internal"
+            docs.mkdir(parents=True)
+            internal.mkdir(parents=True)
 
-            result = scan_files([docs, internal])
+            result = scan_files([str(docs), str(internal)])
             assert result == []
 
 
@@ -78,8 +83,10 @@ class TestParseFile(unittest.TestCase):
     """``parse_file()`` parses YAML frontmatter and body content."""
 
     def test_parse_file_returns_expected_keys(self) -> None:
-        """Returns a dict with ``title``, ``path``, ``content``, ``frontmatter``,
-        and ``section``.
+        """Returns a dict with all expected keys.
+
+        The dict includes ``title``, ``path``, ``content``,
+        ``frontmatter``, and ``section``.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(tmpdir, "test.mdx", "---\ntitle: Hello\n---\nBody")
@@ -95,7 +102,9 @@ class TestParseFile(unittest.TestCase):
         """Frontmatter YAML is correctly parsed and body is separated."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "doc.mdx", "---\ntitle: Greeting\ncount: 3\n---\nHello world",
+                tmpdir,
+                "doc.mdx",
+                "---\ntitle: Greeting\ncount: 3\n---\nHello world",
             )
 
             result = parse_file(fp, root=tmpdir)
@@ -127,7 +136,9 @@ class TestParseFile(unittest.TestCase):
         """Files without frontmatter use filename stem as title."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "my-document.mdx", "Just body content, no frontmatter markers.",
+                tmpdir,
+                "my-document.mdx",
+                "Just body content, no frontmatter markers.",
             )
 
             result = parse_file(fp, root=tmpdir)
@@ -138,7 +149,9 @@ class TestParseFile(unittest.TestCase):
         """Empty frontmatter (``---`` ``---``) yields ``{}``, not ``None``."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "empty.mdx", "---\n---\nBody after empty frontmatter",
+                tmpdir,
+                "empty.mdx",
+                "---\n---\nBody after empty frontmatter",
             )
 
             result = parse_file(fp, root=tmpdir)
@@ -166,10 +179,13 @@ class TestBuildIndex(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             _create_file(tmpdir, "docs/test.mdx", "---\ntitle: Test\n---\nBody content")
 
-            db_path = os.path.join(tmpdir, "test.db")
-            build_index(root_dirs=[os.path.join(tmpdir, "docs")], db_path=db_path)
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
 
-            assert os.path.isfile(db_path)
+            assert db_path.is_file()
             conn = sqlite3.connect(db_path)
             cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = {row[0] for row in cur.fetchall()}
@@ -186,8 +202,11 @@ class TestBuildIndex(unittest.TestCase):
                 "---\ntitle: Hello World\n---\nThis is the body content",
             )
 
-            db_path = os.path.join(tmpdir, "test.db")
-            build_index(root_dirs=[os.path.join(tmpdir, "docs")], db_path=db_path)
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
 
             conn = sqlite3.connect(db_path)
             cur = conn.execute("SELECT title FROM docs_fts WHERE docs_fts MATCH 'body'")
@@ -206,21 +225,28 @@ class TestIncrementalIndex(unittest.TestCase):
     """Re-building the index only processes changed files."""
 
     def test_rebuild_no_changes_no_new_rows(self) -> None:
-        """Re-running ``build_index()`` without file changes produces no
-        additional rows in ``docs_fts``.
+        """Re-running ``build_index()`` without file changes adds no rows.
+
+        The ``docs_fts`` row count stays identical.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             _create_file(tmpdir, "docs/test.mdx", "---\ntitle: Test\n---\nBody content")
 
-            db_path = os.path.join(tmpdir, "test.db")
-            build_index(root_dirs=[os.path.join(tmpdir, "docs")], db_path=db_path)
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
 
             conn = sqlite3.connect(db_path)
             before = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
             conn.close()
 
             # Rebuild without touching any files
-            build_index(root_dirs=[os.path.join(tmpdir, "docs")], db_path=db_path)
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
 
             conn = sqlite3.connect(db_path)
             after = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
@@ -239,15 +265,21 @@ class TestIncrementalIndex(unittest.TestCase):
             for name, content in files.items():
                 file_paths[name] = _create_file(tmpdir, f"docs/{name}", content)
 
-            db_path = os.path.join(tmpdir, "test.db")
-            build_index(root_dirs=[os.path.join(tmpdir, "docs")], db_path=db_path)
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
 
             # Touch only file "b.mdx"
             os.utime(file_paths["b.mdx"], None)
-            b_mtime = os.stat(file_paths["b.mdx"]).st_mtime_ns
+            b_mtime = Path(file_paths["b.mdx"]).stat().st_mtime_ns
 
             # Rebuild
-            build_index(root_dirs=[os.path.join(tmpdir, "docs")], db_path=db_path)
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
 
             conn = sqlite3.connect(db_path)
             rows = conn.execute(
@@ -284,19 +316,24 @@ class TestSectionAssignment(unittest.TestCase):
         """Files under ``internal/`` have section ``'internal'``."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "internal/guide.mdx", "---\ntitle: Guide\n---\nBody",
+                tmpdir,
+                "internal/guide.mdx",
+                "---\ntitle: Guide\n---\nBody",
             )
 
             result = parse_file(fp, root=tmpdir)
             assert result["section"] == "internal"
 
     def test_section_nested_path(self) -> None:
-        """Section is determined by the first path component regardless of
-        nesting depth.
+        """Section is determined by the first path component.
+
+        This holds regardless of nesting depth.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "docs/sub/dir/nested.mdx", "---\ntitle: Nested\n---\nBody",
+                tmpdir,
+                "docs/sub/dir/nested.mdx",
+                "---\ntitle: Nested\n---\nBody",
             )
 
             result = parse_file(fp, root=tmpdir)
@@ -315,15 +352,15 @@ class TestCliEntryPoint(unittest.TestCase):
         """``main()`` creates ``wywy_docs/docs_index.db`` with the correct tables."""
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create the conventional directory layout
-            os.makedirs(os.path.join(tmpdir, "wywy_docs"))
-            os.makedirs(os.path.join(tmpdir, "internal"), exist_ok=True)
+            (Path(tmpdir) / "wywy_docs").mkdir(parents=True)
+            (Path(tmpdir) / "internal").mkdir(parents=True, exist_ok=True)
             _create_file(tmpdir, "docs/test.mdx", "---\ntitle: Test\n---\nBody content")
 
             # Invoke the CLI entry point with an explicit root
             main(root_dir=tmpdir)
 
-            db_path = os.path.join(tmpdir, "wywy_docs", "docs_index.db")
-            assert os.path.isfile(db_path)
+            db_path = Path(tmpdir) / "wywy_docs" / "docs_index.db"
+            assert db_path.is_file()
 
             conn = sqlite3.connect(db_path)
             cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -335,13 +372,13 @@ class TestCliEntryPoint(unittest.TestCase):
     def test_main_respects_root_argument(self) -> None:
         """``main(root_dir=...)`` build the index relative to the given root."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            os.makedirs(os.path.join(tmpdir, "wywy_docs"))
+            (Path(tmpdir) / "wywy_docs").mkdir(parents=True)
             _create_file(tmpdir, "docs/a.mdx", "---\ntitle: A\n---\nContent A")
 
             main(root_dir=tmpdir)
 
-            db_path = os.path.join(tmpdir, "wywy_docs", "docs_index.db")
-            assert os.path.isfile(db_path)
+            db_path = Path(tmpdir) / "wywy_docs" / "docs_index.db"
+            assert db_path.is_file()
 
             conn = sqlite3.connect(db_path)
             count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]

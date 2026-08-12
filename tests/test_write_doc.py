@@ -8,13 +8,14 @@ import + mock (no subprocess).
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import tempfile
 import unittest
+from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from tests.test_server import (
@@ -28,7 +29,6 @@ from tests.test_server import (
     setup_temp_wywy_root,
     verify_metadata,
 )
-import pytest
 
 HOST = "127.0.0.1"
 
@@ -36,9 +36,9 @@ HOST = "127.0.0.1"
 # ── Frontmatter parser helper ──────────────────────────────────────────
 
 
-def _parse_frontmatter(filepath: str) -> tuple[dict[str, object], str]:
+def _parse_frontmatter(filepath: Path) -> tuple[dict[str, object], str]:
     """Read *filepath* and return ``(frontmatter_dict, body_text)``."""
-    with open(filepath) as f:
+    with filepath.open() as f:
         raw = f.read()
     if raw.startswith("---"):
         parts = raw.split("---", 2)
@@ -64,6 +64,7 @@ class TestWriteDocTool(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        """Build the test index and start the server and client."""
         cls.root_dir = setup_temp_wywy_root()
         cls.port = find_free_port()
         build_test_index(
@@ -77,6 +78,7 @@ class TestWriteDocTool(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        """Close the client, stop the server, and remove the temp root."""
         cls.client.close()
         cls.server.stop()
         shutil.rmtree(cls.root_dir, ignore_errors=True)
@@ -130,8 +132,9 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 1 ─────────────────────────────────────────────────────
 
     def test_write_new_doc_creates_file(self) -> None:
-        """Writing a new doc creates the ``.mdx`` file with frontmatter
-        containing *published* and *last_updated*.
+        """Writing a new doc creates the ``.mdx`` file.
+
+        Frontmatter contains *published* and *last_updated*.
         """
         name = self._testMethodName
         resp = self._call(
@@ -144,8 +147,8 @@ class TestWriteDocTool(unittest.TestCase):
         result = json.loads(resp["result"]["content"][0]["text"])
         assert result["path"] == f"docs/{name}.mdx"
 
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        assert os.path.isfile(full_path)
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
+        assert full_path.is_file()
 
         fm, body = _parse_frontmatter(full_path)
         assert "published" in fm
@@ -157,9 +160,10 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 2 ─────────────────────────────────────────────────────
 
     def test_write_update_preserves_published(self) -> None:
-        """Updating preserves the original *published* value, updates
-        *last_updated*, and keeps existing frontmatter keys unless
-        overridden.
+        """Updating preserves the original *published* value.
+
+        *last_updated* is refreshed and existing frontmatter keys are kept
+        unless overridden.
         """
         name = self._testMethodName
         create_file(
@@ -184,7 +188,7 @@ class TestWriteDocTool(unittest.TestCase):
         result = json.loads(resp["result"]["content"][0]["text"])
         assert result["path"] == f"docs/{name}.mdx"
 
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
         fm, body = _parse_frontmatter(full_path)
 
         # published preserved
@@ -202,8 +206,9 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 3 ─────────────────────────────────────────────────────
 
     def test_write_update_no_published_sets_current_time(self) -> None:
-        """Updating a doc that has no *published* field sets *published*
-        to the current time.
+        """Updating a doc without *published* sets *published*.
+
+        The value becomes the current time.
         """
         name = self._testMethodName
         create_file(
@@ -220,7 +225,7 @@ class TestWriteDocTool(unittest.TestCase):
         )
         assert "result" in resp
 
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
         fm, _body = _parse_frontmatter(full_path)
         assert "published" in fm
         assert "last_updated" in fm
@@ -231,8 +236,9 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 4 ─────────────────────────────────────────────────────
 
     def test_write_update_no_frontmatter_sets_both_dates(self) -> None:
-        """Updating a doc with no frontmatter at all succeeds and sets
-        both *published* and *last_updated* fresh.
+        """Updating a doc with no frontmatter at all succeeds.
+
+        Both *published* and *last_updated* are set fresh.
         """
         name = self._testMethodName
         create_file(
@@ -244,7 +250,7 @@ class TestWriteDocTool(unittest.TestCase):
         resp = self._call("docs", name, "# New body")
         assert "result" in resp
 
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
         fm, body = _parse_frontmatter(full_path)
         assert "published" in fm
         assert "last_updated" in fm
@@ -253,16 +259,17 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 5 ─────────────────────────────────────────────────────
 
     def test_write_no_frontmatter_arg_still_has_dates(self) -> None:
-        """Calling ``write_doc`` with ``frontmatter=None`` still generates
-        *published* and *last_updated*.
+        """Calling ``write_doc`` with ``frontmatter=None`` still generates dates.
+
+        Both *published* and *last_updated* are set.
         """
         name = self._testMethodName
         # New doc — no existing file
         resp = self._call("docs", name, "# Body", frontmatter=None)
         assert "result" in resp
 
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        assert os.path.isfile(full_path)
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
+        assert full_path.is_file()
         fm, body = _parse_frontmatter(full_path)
         assert "published" in fm
         assert "last_updated" in fm
@@ -287,8 +294,9 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 8 ─────────────────────────────────────────────────────
 
     def test_write_non_existent_parent_dir_returns_error(self) -> None:
-        """A path whose parent directory does not exist returns JSON-RPC
-        error -32602.
+        """A path whose parent directory does not exist returns an error.
+
+        The tool responds with JSON-RPC error -32602.
         """
         resp = self._call("docs", "nonexistent_parent_dir_12345/file", "body")
         assert "error" in resp
@@ -297,24 +305,26 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 9 ─────────────────────────────────────────────────────
 
     def test_write_symlink_escape_returns_error(self) -> None:
-        """A path that escapes ``docs/`` or ``internal/`` via a symlink
-        returns JSON-RPC error -32602.
+        """A path that escapes via a symlink returns an error.
+
+        Escaping ``docs/`` or ``internal/`` yields JSON-RPC error -32602.
         """
         link_name = f"escape_{self._testMethodName}"
-        link_path = os.path.join(self.root_dir, "docs", link_name)
-        os.symlink("/tmp", link_path)
+        link_path = Path(self.root_dir) / "docs" / link_name
+        link_path.symlink_to("/tmp")
         try:
             resp = self._call("docs", f"{link_name}/evil_file", "body")
             assert "error" in resp
             assert resp["error"]["code"] == -32602
         finally:
-            os.unlink(link_path)
+            link_path.unlink()
 
     # ── Property 10 ────────────────────────────────────────────────────
 
     def test_write_triggers_reindex(self) -> None:
-        """Writing triggers an incremental re-index: the new doc is
-        immediately searchable via ``search_docs``.
+        """Writing triggers an incremental re-index.
+
+        The new doc is immediately searchable via ``search_docs``.
         """
         name = self._testMethodName
         unique_term = f"UNIQUE_SEARCH_TERM_{name}"
@@ -346,13 +356,18 @@ class TestWriteDocTool(unittest.TestCase):
     # ── Property 12 ────────────────────────────────────────────────────
 
     def test_write_reserved_frontmatter_rejected(self) -> None:
-        """Frontmatter containing ``published`` or ``last_updated`` is
-        rejected with JSON-RPC error -32602.
+        """Reserved frontmatter keys are rejected.
+
+        Frontmatter containing ``published`` or ``last_updated`` yields
+        JSON-RPC error -32602.
         """
         name = self._testMethodName
         # published
         resp = self._call(
-            "docs", name, "# Body", frontmatter={"published": "2024-01-01"},
+            "docs",
+            name,
+            "# Body",
+            frontmatter={"published": "2024-01-01"},
         )
         assert "error" in resp
         assert resp["error"]["code"] == -32602
@@ -361,7 +376,10 @@ class TestWriteDocTool(unittest.TestCase):
         # last_updated
         name2 = f"{name}_lu"
         resp2 = self._call(
-            "docs", name2, "# Body", frontmatter={"last_updated": "2024-01-01"},
+            "docs",
+            name2,
+            "# Body",
+            frontmatter={"last_updated": "2024-01-01"},
         )
         assert "error" in resp2
         assert resp2["error"]["code"] == -32602
@@ -373,39 +391,41 @@ class TestWriteDocTool(unittest.TestCase):
 
 
 class TestWriteDocToolIndexFailure(unittest.TestCase):
-    """When ``build_index`` fails after a successful file write, the tool
-    returns a JSON-RPC error -32603 and the ``file_metadata`` entry for the
-    path is deleted.
+    """Behavior when ``build_index`` fails after a successful file write.
 
-    This class does **not** use ``ServerProcess``.  Instead it imports
-    ``wywy_docs.server`` directly, sets ``_ROOT_DIR`` to a temporary
-    directory, and patches ``build_index`` to fail.
+    The tool returns a JSON-RPC error -32603 and the ``file_metadata``
+    entry for the path is deleted.  This class does **not** use
+    ``ServerProcess``.  Instead it imports ``wywy_docs.server`` directly,
+    sets ``_ROOT_DIR`` to a temporary directory, and patches
+    ``build_index`` to fail.
     """
 
     def setUp(self) -> None:
+        """Create a temp root, an initial doc, and a built index."""
         self.root_dir = tempfile.mkdtemp()
         for d in ("docs", "internal", "wywy_docs"):
-            os.makedirs(os.path.join(self.root_dir, d), exist_ok=True)
+            (Path(self.root_dir) / d).mkdir(parents=True, exist_ok=True)
         create_file(
             self.root_dir,
             "docs/initial.mdx",
             "---\ntitle: Initial\n---\nInitial body.",
         )
-        db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
+        db_path = Path(self.root_dir) / "wywy_docs" / "docs_index.db"
         from wywy_docs.indexer import build_index as _bi
 
         _bi(
             root_dirs=[
-                os.path.join(self.root_dir, "docs"),
-                os.path.join(self.root_dir, "internal"),
+                str(Path(self.root_dir) / "docs"),
+                str(Path(self.root_dir) / "internal"),
             ],
-            db_path=db_path,
+            db_path=str(db_path),
         )
 
         # Quick sanity: file_metadata has the initial entry
         verify_metadata(self.root_dir, "docs/initial.mdx", present=True)
 
     def tearDown(self) -> None:
+        """Remove the temp root."""
         shutil.rmtree(self.root_dir, ignore_errors=True)
 
     # ── test ───────────────────────────────────────────────────────────
@@ -413,8 +433,9 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
     def test_write_doc_index_failure_returns_error_and_cleans_metadata(
         self,
     ) -> None:
-        """When ``build_index`` raises, the tool returns -32603 and
-        deletes the ``file_metadata`` entry for the just-written path.
+        """When ``build_index`` raises, the tool returns -32603.
+
+        The ``file_metadata`` entry for the just-written path is deleted.
         """
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 

@@ -7,11 +7,13 @@ Test 8 uses direct import + mock (no subprocess).
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from tests.test_server import (
     JsonRpcResponse,
@@ -24,7 +26,6 @@ from tests.test_server import (
     setup_temp_wywy_root,
     verify_metadata,
 )
-import pytest
 
 HOST = "127.0.0.1"
 
@@ -35,15 +36,16 @@ HOST = "127.0.0.1"
 
 
 class TestDeleteDocTool(unittest.TestCase):
-    """The ``delete_doc`` tool removes a documentation file from disk and
-    cleans up its index entries.
+    """The ``delete_doc`` tool removes a doc from disk and cleans up.
 
-    All tests share a single server process for speed.  Each test uses
+    It removes the documentation file and its index entries.  All tests
+    share a single server process for speed.  Each test uses
     ``self._testMethodName`` to reference its own pre-indexed doc.
     """
 
     @classmethod
     def setUpClass(cls) -> None:
+        """Create a temp root, start the server, and connect the client."""
         cls.root_dir = setup_temp_wywy_root()
         cls.port = find_free_port()
         cls.server = ServerProcess(cls.root_dir, cls.port)
@@ -88,6 +90,7 @@ class TestDeleteDocTool(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
+        """Close the client, stop the server, and remove the temp root."""
         cls.client.close()
         cls.server.stop()
         shutil.rmtree(cls.root_dir, ignore_errors=True)
@@ -139,8 +142,9 @@ class TestDeleteDocTool(unittest.TestCase):
     # ── Property 1: Delete existing doc ────────────────────────────────
 
     def test_delete_existing_doc(self) -> None:
-        """Deleting an existing doc removes the file, metadata, and
-        index entry, and returns the success response.
+        """Deleting an existing doc removes the file and metadata.
+
+        The index entry is removed and the success response returned.
         """
         name = self._testMethodName
         path_arg = f"docs/{name}.mdx"
@@ -151,8 +155,8 @@ class TestDeleteDocTool(unittest.TestCase):
         assert result == {"path": path_arg, "deleted": True}
 
         # File gone from disk
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        assert not os.path.isfile(full_path)
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
+        assert not full_path.is_file()
 
         # Metadata entry removed
         verify_metadata(self.root_dir, path_arg, present=False)
@@ -168,8 +172,8 @@ class TestDeleteDocTool(unittest.TestCase):
         path_arg = f"docs/{name}.mdx"
 
         # Sanity: file does NOT exist before the call
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        assert not os.path.isfile(full_path)
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
+        assert not full_path.is_file()
 
         resp = self._call(path_arg)
         assert "result" in resp, f"Expected result, got error: {resp.get('error')}"
@@ -177,7 +181,7 @@ class TestDeleteDocTool(unittest.TestCase):
         assert result == {"path": path_arg, "deleted": True}
 
         # File still doesn't exist
-        assert not os.path.isfile(full_path)
+        assert not full_path.is_file()
 
     # ── Property 3: Path traversal ─────────────────────────────────────
 
@@ -192,20 +196,21 @@ class TestDeleteDocTool(unittest.TestCase):
     def test_delete_symlink_escape(self) -> None:
         """A path that escapes via a symlink returns JSON-RPC error -32602."""
         link_name = f"escape_{self._testMethodName}"
-        link_path = os.path.join(self.root_dir, "docs", link_name)
-        os.symlink("/tmp", link_path)
+        link_path = Path(self.root_dir) / "docs" / link_name
+        link_path.symlink_to("/tmp")
         try:
             resp = self._call(f"docs/{link_name}/evil_file.mdx")
             assert "error" in resp
             assert resp["error"]["code"] == -32602
         finally:
-            os.unlink(link_path)
+            link_path.unlink()
 
     # ── Property 5: Auto-append .mdx ───────────────────────────────────
 
     def test_delete_auto_appends_mdx(self) -> None:
-        """Calling ``delete_doc`` without ``.mdx`` still deletes the
-        ``.mdx`` file on disk.
+        """Calling ``delete_doc`` without ``.mdx`` still deletes the file.
+
+        The ``.mdx`` extension is appended automatically.
         """
         name = self._testMethodName
 
@@ -216,15 +221,13 @@ class TestDeleteDocTool(unittest.TestCase):
         assert result == {"path": f"docs/{name}.mdx", "deleted": True}
 
         # The .mdx file is gone from disk
-        full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        assert not os.path.isfile(full_path)
+        full_path = Path(self.root_dir) / "docs" / f"{name}.mdx"
+        assert not full_path.is_file()
 
     # ── Property 6: Internal section ───────────────────────────────────
 
     def test_delete_internal_doc(self) -> None:
-        """Deleting from the ``internal/`` section works identically to
-        the ``docs/`` section.
-        """
+        """Deleting from ``internal/`` works identically to ``docs/``."""
         name = self._testMethodName
         path_arg = f"internal/{name}.mdx"
 
@@ -234,8 +237,8 @@ class TestDeleteDocTool(unittest.TestCase):
         assert result == {"path": path_arg, "deleted": True}
 
         # File gone from disk
-        full_path = os.path.join(self.root_dir, "internal", f"{name}.mdx")
-        assert not os.path.isfile(full_path)
+        full_path = Path(self.root_dir) / "internal" / f"{name}.mdx"
+        assert not full_path.is_file()
 
         # Metadata entry removed
         verify_metadata(self.root_dir, path_arg, present=False)
@@ -246,8 +249,9 @@ class TestDeleteDocTool(unittest.TestCase):
     # ── Property 7: Unknown section ────────────────────────────────────
 
     def test_delete_unknown_section(self) -> None:
-        """A path outside ``docs/`` and ``internal/`` returns JSON-RPC
-        error -32602.
+        """A path outside ``docs/`` and ``internal/`` returns an error.
+
+        The tool responds with JSON-RPC error -32602.
         """
         resp = self._call("other/file.mdx")
         assert "error" in resp
@@ -260,43 +264,49 @@ class TestDeleteDocTool(unittest.TestCase):
 
 
 class TestDeleteDocToolIndexFailure(unittest.TestCase):
-    """When ``os.remove`` fails after finding the document, the tool raises
-    ``RuntimeError`` which maps to JSON-RPC error -32603.
+    """Behavior when ``os.remove`` fails after finding the document.
 
+    The tool raises ``RuntimeError`` which maps to JSON-RPC error -32603.
     This class does **not** use ``ServerProcess``.  Instead it imports
     ``wywy_docs.server`` directly, sets ``_ROOT_DIR`` to a temporary
     directory, and patches ``os.remove`` to fail with ``PermissionError``.
     """
 
     def setUp(self) -> None:
+        """Create a temp root, an initial doc, and a built index."""
         self.root_dir = tempfile.mkdtemp()
         for d in ("docs", "internal", "wywy_docs"):
-            os.makedirs(os.path.join(self.root_dir, d), exist_ok=True)
+            (Path(self.root_dir) / d).mkdir(parents=True, exist_ok=True)
         create_file(
             self.root_dir,
             "docs/test_delete_os_remove_failure.mdx",
             "---\ntitle: OS Remove Failure\n---\nContent.",
         )
-        db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
+        db_path = Path(self.root_dir) / "wywy_docs" / "docs_index.db"
         from wywy_docs.indexer import build_index as _bi
 
         _bi(
             root_dirs=[
-                os.path.join(self.root_dir, "docs"),
-                os.path.join(self.root_dir, "internal"),
+                str(Path(self.root_dir) / "docs"),
+                str(Path(self.root_dir) / "internal"),
             ],
-            db_path=db_path,
+            db_path=str(db_path),
         )
 
         # Sanity: file exists and is indexed
-        assert os.path.isfile(os.path.join(self.root_dir, "docs", "test_delete_os_remove_failure.mdx"))
+        assert (
+            Path(self.root_dir) / "docs" / "test_delete_os_remove_failure.mdx"
+        ).is_file()
 
     def tearDown(self) -> None:
+        """Remove the temp root."""
         shutil.rmtree(self.root_dir, ignore_errors=True)
 
     def test_delete_os_remove_failure_returns_error(self) -> None:
-        """When ``os.remove`` raises ``PermissionError`` (subclass of
-        ``OSError``), the tool raises ``RuntimeError`` → -32603.
+        """When ``os.remove`` raises ``PermissionError``, the tool errors.
+
+        The ``PermissionError`` is a subclass of ``OSError``; the tool
+        raises ``RuntimeError`` → -32603.
         """
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 
@@ -311,7 +321,9 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
             assert "Permission denied" in str(ctx.value)
 
         # The file should still be on disk since deletion failed
-        assert os.path.isfile(os.path.join(self.root_dir, "docs", "test_delete_os_remove_failure.mdx"))
+        assert (
+            Path(self.root_dir) / "docs" / "test_delete_os_remove_failure.mdx"
+        ).is_file()
 
 
 if __name__ == "__main__":

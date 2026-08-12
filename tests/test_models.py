@@ -13,9 +13,9 @@ from __future__ import annotations
 import unittest
 
 import pydantic
+import pytest
 
 from wywy_docs import DocFrontmatter, Section
-import pytest
 
 
 class TestDocFrontmatter(unittest.TestCase):
