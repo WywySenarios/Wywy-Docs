@@ -178,8 +178,9 @@ def build_index(root_dirs: list[str], db_path: str) -> None:
 
 
 def main(root_dir: str | None = None) -> None:
-    """Convenience entry point that calls :func:`build_index` with the
-    conventional Wywy-Docs directory layout.
+    """Convenience entry point that calls :func:`build_index`.
+
+    Uses the conventional Wywy-Docs directory layout.
 
     Parameters
     ----------

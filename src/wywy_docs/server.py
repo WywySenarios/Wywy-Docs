@@ -13,7 +13,7 @@ import os
 import sqlite3
 import tempfile
 import time
-from typing import Callable, cast
+from datetime import date, datetime
 
 import yaml
 from mcp.server.fastmcp import FastMCP
@@ -77,8 +77,9 @@ def _ensure_index(root_dir: str) -> None:
 
 
 def _normalize_doc_path(path: str) -> str:
-    """Strip leading/trailing slashes, reject path traversal, and
-    append ``.mdx`` if no extension is present.
+    """Strip leading/trailing slashes and append ``.mdx`` if needed.
+
+    Rejects path traversal.
 
     Args:
         path: Relative document path (e.g. ``foo/bar`` or ``/foo/bar/``).
@@ -88,6 +89,7 @@ def _normalize_doc_path(path: str) -> str:
 
     Raises:
         ValueError: If path contains ``..`` traversal.
+
     """
     path = path.strip("/")
 
@@ -101,15 +103,16 @@ def _normalize_doc_path(path: str) -> str:
 
 
 def _sanitize_query(query: str) -> str:
-    """Convert a user query into a literal FTS5 phrase-AND query.
+    r"""Convert a user query into a literal FTS5 phrase-AND query.
 
-    Strips embedded double quotes and C0 control characters (``\\x00-\\x1f``,
+    Strips embedded double quotes and C0 control characters (``\x00-\x1f``,
     NUL included), splits on whitespace, wraps each token in double quotes,
     and joins with spaces so FTS5 treats every token as a literal phrase
     rather than operator syntax (``-``, ``OR``, ``*``, etc.).
 
     Raises:
         ValueError: If no tokens remain after sanitization.
+
     """
     _strip = {ord('"'): None, **{i: None for i in range(0x20)}}
     tokens = query.translate(_strip).split()
@@ -119,8 +122,9 @@ def _sanitize_query(query: str) -> str:
 
 
 def _resolve_section_path(section: str, path: str) -> str:
-    """Resolve an absolute filesystem path within a section, guarding
-    against symlink-based directory escape.
+    """Resolve an absolute filesystem path within a section.
+
+    Guards against symlink-based directory escape.
 
     Args:
         section: ``"docs"`` or ``"internal"``.
@@ -131,6 +135,7 @@ def _resolve_section_path(section: str, path: str) -> str:
 
     Raises:
         ValueError: If the resolved path escapes the section directory.
+
     """
     section_dir = os.path.join(_ROOT_DIR, section)
     abs_path = os.path.join(section_dir, path)
@@ -151,6 +156,7 @@ def search_docs(query: str, max_results: int = 10):
     Args:
         query: Literal text to search for. Hyphens and punctuation are treated literally.
         max_results: Maximum number of results (default 10).
+
     """
     if not query or not query.strip():
         raise ValueError("query must be a non-empty string")
@@ -194,6 +200,7 @@ def get_doc(path: str):
 
     Args:
         path: Document path relative to Wywy-Docs root.
+
     """
     path = _normalize_doc_path(path)
     abs_path = os.path.join(_ROOT_DIR, path)
@@ -220,6 +227,7 @@ def write_doc(
         path: Path relative to the section directory.
         content: Document content (body text, after frontmatter).
         frontmatter: Optional YAML frontmatter fields.
+
     """
     # Normalize path and resolve symlink-safe absolute path
     path = _normalize_doc_path(path)
@@ -259,9 +267,8 @@ def write_doc(
         pub_val = existing_fm["published"]
         if isinstance(pub_val, str):
             published = pub_val
-        elif hasattr(pub_val, "isoformat"):
-            iso_format = cast(Callable[[], str], getattr(pub_val, "isoformat"))
-            published = iso_format()
+        elif isinstance(pub_val, (date, datetime)):
+            published = pub_val.isoformat()
         else:
             published = str(pub_val)
     else:
@@ -325,6 +332,7 @@ def delete_doc(path: str):
 
     Args:
         path: Document path relative to Wywy-Docs root.
+
     """
     path = path.strip("/")
 
@@ -410,6 +418,7 @@ mcp._mcp_server.request_handlers[CallToolRequest] = _call_tool_handler  # type: 
 
 
 def main() -> None:
+    """Run the MCP SSE server, resolving root dir and port from env/args."""
     logging.basicConfig(
         level=logging.INFO, format="wywy-docs: %(levelname)s %(message)s"
     )
