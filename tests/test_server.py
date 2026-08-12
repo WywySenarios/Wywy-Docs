@@ -10,7 +10,6 @@ assert on JSON-RPC responses.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import logging
 import os
@@ -23,10 +22,12 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from http.client import HTTPConnection, HTTPResponse
 from typing import TypedDict
 from urllib.error import URLError
 from urllib.request import urlopen
+import pytest
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 2530
@@ -94,7 +95,7 @@ def find_free_port() -> int:
 
 
 def create_file(
-    root: str, rel_path: str, content: str = "---\ntitle: X\n---\nbody"
+    root: str, rel_path: str, content: str = "---\ntitle: X\n---\nbody",
 ) -> str:
     """Create a file at *root*/*rel_path* with *content*.
 
@@ -202,7 +203,7 @@ def cleanup_ephemeral_files(root_dir: str, rel_paths: list[str]) -> None:
                 try:
                     conn.execute("DELETE FROM docs_fts WHERE path = ?", (rel_path,))
                     conn.execute(
-                        "DELETE FROM file_metadata WHERE path = ?", (rel_path,)
+                        "DELETE FROM file_metadata WHERE path = ?", (rel_path,),
                     )
                     conn.commit()
                 finally:
@@ -246,7 +247,7 @@ class MCPClient:
             raw = response.readline()
             if not raw:
                 raise ConnectionError(
-                    "SSE stream closed before receiving endpoint event"
+                    "SSE stream closed before receiving endpoint event",
                 )
             line = raw.decode("utf-8").strip()
             if line.startswith("event: "):
@@ -280,14 +281,14 @@ class MCPClient:
                     "capabilities": {},
                     "clientInfo": {"name": "wywy-test", "version": "1.0"},
                 },
-            }
+            },
         )
         # Send notifications/initialized (fire-and-forget).
         self.send_notification(
             {
                 "jsonrpc": "2.0",
                 "method": "notifications/initialized",
-            }
+            },
         )
 
     def _read_events(self, response: HTTPResponse) -> None:
@@ -430,7 +431,7 @@ class ServerProcess:
             if ret is not None:
                 raise RuntimeError(
                     f"Server process exited early with code {ret}. "
-                    f"stderr: {self.read_stderr()}"
+                    f"stderr: {self.read_stderr()}",
                 )
             try:
                 resp = urlopen(f"http://{HOST}:{self.port}/sse", timeout=0.5)
@@ -442,7 +443,7 @@ class ServerProcess:
         raise RuntimeError(
             f"Server did not start within {SERVER_TIMEOUT}s. "
             f"Last error: {last_error}. "
-            f"stderr: {self.read_stderr()}"
+            f"stderr: {self.read_stderr()}",
         )
 
     def read_stderr(self) -> str:
@@ -486,10 +487,10 @@ class TestServerEndpoints(unittest.TestCase):
         """GET /sse returns HTTP 200 (SSE connection established)."""
         with _with_server(self.root_dir, self.port):
             resp = urlopen(f"http://{HOST}:{self.port}/sse", timeout=5)
-            self.assertEqual(resp.status, 200)
+            assert resp.status == 200
             # The connection stays open; read a bit to confirm SSE framing.
             chunk = resp.readline()
-            self.assertIn(b"event:", chunk)
+            assert b"event:" in chunk
 
     def test_messages_endpoint_returns_202(self) -> None:
         """POST /messages?session_id=... returns 202 (message accepted)."""
@@ -507,13 +508,14 @@ class TestServerEndpoints(unittest.TestCase):
             )
             resp = conn.getresponse()
             resp.read()
-            self.assertEqual(resp.status, 202)
+            assert resp.status == 202
             conn.close()
             client.close()
 
     def test_server_fails_with_clear_error_when_port_occupied(self) -> None:
         """Starting the server on an occupied port fails with exit code 1
-        and 'address already in use' (not code 3/NOTIMPLEMENTED)."""
+        and 'address already in use' (not code 3/NOTIMPLEMENTED).
+        """
         # Occupy the port with a listening socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -522,11 +524,11 @@ class TestServerEndpoints(unittest.TestCase):
         s.settimeout(5)
         try:
             server = ServerProcess(self.root_dir, self.port)
-            with self.assertRaises(RuntimeError) as ctx:
+            with pytest.raises(RuntimeError) as ctx:
                 server.start()
-            msg = str(ctx.exception)
+            msg = str(ctx.value)
             # Must mention the port conflict
-            self.assertIn("address already in use", msg.lower())
+            assert "address already in use" in msg.lower()
         finally:
             s.close()
 
@@ -540,10 +542,7 @@ class TestServerEndpoints(unittest.TestCase):
         or other runtime failure.
         """
         venv_python = os.path.join(_PROJECT_ROOT, ".venv", "bin", "python")
-        self.assertTrue(
-            os.path.isfile(venv_python),
-            f"Venv Python not found at {venv_python}",
-        )
+        assert os.path.isfile(venv_python), f"Venv Python not found at {venv_python}"
 
         # Binary-search which sub-import hangs (the whole module import times out)
         for label, code in [
@@ -558,13 +557,8 @@ class TestServerEndpoints(unittest.TestCase):
                 timeout=10,
                 cwd=_PROJECT_ROOT,
             )
-            self.assertEqual(
-                r.returncode,
-                0,
-                f"{label} FAILED: exit={r.returncode} "
-                f"stdout={r.stdout!r} stderr={r.stderr!r}",
-            )
-            self.assertIn("OK", r.stdout, f"{label} did not print OK")
+            assert r.returncode == 0, f"{label} FAILED: exit={r.returncode} " f"stdout={r.stdout!r} stderr={r.stderr!r}"
+            assert "OK" in r.stdout, f"{label} did not print OK"
 
         # Now start the server as systemd would
         env = os.environ.copy()
@@ -585,7 +579,7 @@ class TestServerEndpoints(unittest.TestCase):
                 stderr = proc.stderr.read().decode() if proc.stderr else ""
                 self.fail(
                     f"Server exited with code {ret} (systemd sees NOTIMPLEMENTED=3 "
-                    f"or FAILURE=1). stderr follows:\n{stderr}"
+                    f"or FAILURE=1). stderr follows:\n{stderr}",
                 )
             # If still running, it started fine
         finally:
@@ -620,16 +614,16 @@ class TestToolsList(unittest.TestCase):
     def test_tools_list_returns_search_docs_and_get_doc(self) -> None:
         """Calling ``tools/list`` returns both tool definitions."""
         resp = self.client.send_message(
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         tools = resp["result"]["tools"]
         tool_names = {t["name"] for t in tools}
-        self.assertIn("search_docs", tool_names)
-        self.assertIn("get_doc", tool_names)
-        self.assertIn("delete_doc", tool_names)
+        assert "search_docs" in tool_names
+        assert "get_doc" in tool_names
+        assert "delete_doc" in tool_names
         search_docs_tool = next(t for t in tools if t["name"] == "search_docs")
-        self.assertIn("literal", search_docs_tool["description"])
+        assert "literal" in search_docs_tool["description"]
 
 
 class TestSearchDocsTool(unittest.TestCase):
@@ -671,15 +665,15 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": "Python", "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         content = resp["result"]["content"]
-        self.assertIsInstance(content, list)
+        assert isinstance(content, list)
         body_text = " ".join(str(item.get("text", "")) for item in content)
-        self.assertIn("Python", body_text)
+        assert "Python" in body_text
         # At least one result should be present
-        self.assertGreater(len(content), 0)
+        assert len(content) > 0
 
     def test_search_docs_returns_section(self) -> None:
         """Results include a ``section`` field ("docs" or "internal") matching the path prefix."""
@@ -692,22 +686,22 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": "shared_term", "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         content = resp["result"]["content"]
-        self.assertIsInstance(content, list)
+        assert isinstance(content, list)
         body_text = " ".join(str(item.get("text", "")) for item in content)
         results = json.loads(body_text)
-        self.assertGreater(len(results), 0)
+        assert len(results) > 0
         for r in results:
-            self.assertIn("section", r)
-            self.assertIsNotNone(r["section"])
+            assert "section" in r
+            assert r["section"] is not None
             path = r["path"]
             if path.startswith("docs/"):
-                self.assertEqual(r["section"], "docs")
+                assert r["section"] == "docs"
             elif path.startswith("internal/"):
-                self.assertEqual(r["section"], "internal")
+                assert r["section"] == "internal"
 
     def test_search_docs_empty_query_returns_error(self) -> None:
         """Empty query returns JSON-RPC error -32602."""
@@ -720,11 +714,11 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": ""},
                 },
-            }
+            },
         )
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
-        self.assertIn("query must be a non-empty string", resp["error"]["message"])
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
+        assert "query must be a non-empty string" in resp["error"]["message"]
 
     def test_search_docs_operator_soup_is_literal(self) -> None:
         """Operator soup like ``a OR OR b`` is treated as literal text, not FTS5 syntax."""
@@ -737,14 +731,14 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": "a OR OR b", "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         content = resp["result"]["content"]
-        self.assertIsInstance(content, list)
+        assert isinstance(content, list)
         body_text = " ".join(str(item.get("text", "")) for item in content)
         results = json.loads(body_text)
-        self.assertEqual(results, [])
+        assert results == []
 
     def test_search_docs_hyphenated_query_returns_results(self) -> None:
         """A hyphenated query is literal text, returning the matching doc instead of -32603."""
@@ -757,15 +751,15 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": "tree-map", "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         content = resp["result"]["content"]
-        self.assertIsInstance(content, list)
+        assert isinstance(content, list)
         body_text = " ".join(str(item.get("text", "")) for item in content)
         results = json.loads(body_text)
-        self.assertGreater(len(results), 0)
-        self.assertIn("docs/tree-map.mdx", [r["path"] for r in results])
+        assert len(results) > 0
+        assert "docs/tree-map.mdx" in [r["path"] for r in results]
 
     def test_search_docs_unbalanced_quotes_stripped(self) -> None:
         """An unbalanced double quote is stripped safely instead of raising -32603."""
@@ -778,9 +772,9 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": 'say "hello', "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
 
     def test_search_docs_quote_only_query_returns_empty_error(self) -> None:
         """A query that sanitizes to empty keeps the empty-query -32602 contract."""
@@ -793,11 +787,11 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": '"'},
                 },
-            }
+            },
         )
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
-        self.assertIn("query must be a non-empty string", resp["error"]["message"])
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
+        assert "query must be a non-empty string" in resp["error"]["message"]
 
     def test_search_docs_nul_byte_query_does_not_error(self) -> None:
         """A NUL byte inside a query never produces -32603 (load-bearing guard)."""
@@ -810,9 +804,9 @@ class TestSearchDocsTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": "tree\u0000map", "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
 
 
 class TestGetDocTool(unittest.TestCase):
@@ -852,14 +846,14 @@ class TestGetDocTool(unittest.TestCase):
                     "name": "get_doc",
                     "arguments": {"path": "docs/test.mdx"},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         content = resp["result"]["content"]
-        self.assertIsInstance(content, list)
+        assert isinstance(content, list)
         body_text = " ".join(str(item.get("text", "")) for item in content)
-        self.assertIn("Test Doc", body_text)
-        self.assertIn("Full body content here", body_text)
+        assert "Test Doc" in body_text
+        assert "Full body content here" in body_text
 
     def test_get_doc_appends_mdx_auto(self) -> None:
         """Path without .mdx is normalized — .mdx appended automatically."""
@@ -872,14 +866,14 @@ class TestGetDocTool(unittest.TestCase):
                     "name": "get_doc",
                     "arguments": {"path": "docs/test"},
                 },
-            }
+            },
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         content = resp["result"]["content"]
-        self.assertIsInstance(content, list)
+        assert isinstance(content, list)
         body_text = " ".join(str(item.get("text", "")) for item in content)
-        self.assertIn("Test Doc", body_text)
-        self.assertIn("Full body content here", body_text)
+        assert "Test Doc" in body_text
+        assert "Full body content here" in body_text
 
     def test_get_doc_invalid_path_returns_error(self) -> None:
         """Invalid path returns JSON-RPC error -32602."""
@@ -892,11 +886,11 @@ class TestGetDocTool(unittest.TestCase):
                     "name": "get_doc",
                     "arguments": {"path": "nonexistent.mdx"},
                 },
-            }
+            },
         )
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
-        self.assertIn("document not found", resp["error"]["message"])
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
+        assert "document not found" in resp["error"]["message"]
 
 
 class TestAutoBuildIndex(unittest.TestCase):
@@ -918,17 +912,17 @@ class TestAutoBuildIndex(unittest.TestCase):
     def test_start_without_index_creates_database(self) -> None:
         """Starting without ``docs_index.db`` creates it automatically."""
         db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
-        self.assertFalse(os.path.isfile(db_path))
+        assert not os.path.isfile(db_path)
 
         server = ServerProcess(self.root_dir, self.port)
         server.start()
         try:
-            self.assertTrue(os.path.isfile(db_path))
+            assert os.path.isfile(db_path)
             conn = sqlite3.connect(db_path)
             cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = {row[0] for row in cur.fetchall()}
             conn.close()
-            self.assertIn("docs_fts", tables)
+            assert "docs_fts" in tables
         finally:
             server.stop()
 
@@ -951,7 +945,7 @@ class TestAutoBuildIndex(unittest.TestCase):
             conn = sqlite3.connect(db_path)
             after_count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
             conn.close()
-            self.assertEqual(before_count, after_count)
+            assert before_count == after_count
         finally:
             server.stop()
 
@@ -974,32 +968,33 @@ class TestEnsureIndexMissingDirectories(unittest.TestCase):
 
     def test_ensure_index_warns_when_docs_and_internal_missing(self) -> None:
         """Missing docs/ and internal/ produce warnings plus an empty FTS5
-        index instead of a crash."""
+        index instead of a crash.
+        """
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 
         with self.assertLogs(server_mod.logger, level="WARNING") as cm:
             server_mod._ensure_index(self.root_dir)  # type: ignore[reportPrivateUsage]
 
         log_text = "\n".join(cm.output)
-        self.assertIn("docs directory does not exist", log_text)
-        self.assertIn("internal directory does not exist", log_text)
+        assert "docs directory does not exist" in log_text
+        assert "internal directory does not exist" in log_text
 
         # Index database is still created with an empty FTS5 table.
         db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
-        self.assertTrue(os.path.isfile(db_path))
+        assert os.path.isfile(db_path)
         conn = sqlite3.connect(db_path)
         try:
             tables = {
                 row[0]
                 for row in conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
+                    "SELECT name FROM sqlite_master WHERE type='table'",
                 ).fetchall()
             }
             count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
         finally:
             conn.close()
-        self.assertIn("docs_fts", tables)
-        self.assertEqual(count, 0)
+        assert "docs_fts" in tables
+        assert count == 0
 
 
 class TestServerMissingDirectories(unittest.TestCase):
@@ -1032,13 +1027,13 @@ class TestServerMissingDirectories(unittest.TestCase):
         """Missing sections still produce a ``docs_fts`` table with zero rows."""
         with _with_server(self.root_dir, self.port):
             db_path = os.path.join(self.root_dir, "wywy_docs", "docs_index.db")
-            self.assertTrue(os.path.isfile(db_path))
+            assert os.path.isfile(db_path)
             conn = sqlite3.connect(db_path)
             try:
                 count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
             finally:
                 conn.close()
-            self.assertEqual(count, 0)
+            assert count == 0
 
     def test_search_docs_returns_empty_when_index_empty(self) -> None:
         """search_docs on an empty index returns ``[]`` for a valid query."""
@@ -1055,19 +1050,20 @@ class TestServerMissingDirectories(unittest.TestCase):
                             "name": "search_docs",
                             "arguments": {"query": "nonexistent_term"},
                         },
-                    }
+                    },
                 )
-                self.assertIn("result", resp)
+                assert "result" in resp
                 content = resp["result"]["content"]
                 body_text = " ".join(str(item.get("text", "")) for item in content)
                 results = json.loads(body_text)
-                self.assertEqual(results, [])
+                assert results == []
             finally:
                 client.close()
 
     def test_mixed_state_warns_for_missing_dir_only(self) -> None:
         """With only ``docs/`` present: warn about ``internal/`` only and
-        index files from the existing ``docs/`` directory."""
+        index files from the existing ``docs/`` directory.
+        """
         create_file(
             self.root_dir,
             "docs/only.mdx",
@@ -1086,20 +1082,20 @@ class TestServerMissingDirectories(unittest.TestCase):
                             "name": "search_docs",
                             "arguments": {"query": "zephyrflorabranch"},
                         },
-                    }
+                    },
                 )
-                self.assertIn("result", resp)
+                assert "result" in resp
                 content = resp["result"]["content"]
                 body_text = " ".join(str(item.get("text", "")) for item in content)
                 results = json.loads(body_text)
-                self.assertGreater(len(results), 0)
-                self.assertEqual(results[0]["path"], "docs/only.mdx")
+                assert len(results) > 0
+                assert results[0]["path"] == "docs/only.mdx"
             finally:
                 client.close()
 
         stderr = server.read_stderr()
-        self.assertIn("internal directory does not exist", stderr)
-        self.assertNotIn("docs directory does not exist", stderr)
+        assert "internal directory does not exist" in stderr
+        assert "docs directory does not exist" not in stderr
 
 
 class TestServerStartupTime(unittest.TestCase):
@@ -1123,7 +1119,7 @@ class TestServerStartupTime(unittest.TestCase):
         server.start()
         elapsed = time.time() - start
         server.stop()
-        self.assertLess(elapsed, 2.0)
+        assert elapsed < 2.0
 
 
 if __name__ == "__main__":

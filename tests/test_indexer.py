@@ -15,7 +15,7 @@ from wywy_docs.indexer import build_index, main, parse_file, scan_files
 
 
 def _create_file(
-    root: str, rel_path: str, content: str = "---\ntitle: X\n---\nbody"
+    root: str, rel_path: str, content: str = "---\ntitle: X\n---\nbody",
 ) -> str:
     """Create a file at *root*/*rel_path* with *content*, creating parent
     directories as needed.  Returns the absolute path to the created file.
@@ -51,11 +51,11 @@ class TestScanFiles(unittest.TestCase):
                 [
                     os.path.join(tmpdir, "docs"),
                     os.path.join(tmpdir, "internal"),
-                ]
+                ],
             )
-            self.assertEqual(len(result), 3)
+            assert len(result) == 3
             for fp in expected:
-                self.assertIn(fp, result)
+                assert fp in result
 
     def test_scan_files_empty_directories(self) -> None:
         """Returns an empty list when no ``.mdx`` files exist."""
@@ -66,7 +66,7 @@ class TestScanFiles(unittest.TestCase):
             os.makedirs(internal)
 
             result = scan_files([docs, internal])
-            self.assertEqual(result, [])
+            assert result == []
 
 
 # ===========================================================================
@@ -79,28 +79,29 @@ class TestParseFile(unittest.TestCase):
 
     def test_parse_file_returns_expected_keys(self) -> None:
         """Returns a dict with ``title``, ``path``, ``content``, ``frontmatter``,
-        and ``section``."""
+        and ``section``.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(tmpdir, "test.mdx", "---\ntitle: Hello\n---\nBody")
 
             result = parse_file(fp, root=tmpdir)
-            self.assertIn("title", result)
-            self.assertIn("path", result)
-            self.assertIn("content", result)
-            self.assertIn("frontmatter", result)
-            self.assertIn("section", result)
+            assert "title" in result
+            assert "path" in result
+            assert "content" in result
+            assert "frontmatter" in result
+            assert "section" in result
 
     def test_parse_file_extracts_frontmatter(self) -> None:
         """Frontmatter YAML is correctly parsed and body is separated."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "doc.mdx", "---\ntitle: Greeting\ncount: 3\n---\nHello world"
+                tmpdir, "doc.mdx", "---\ntitle: Greeting\ncount: 3\n---\nHello world",
             )
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["title"], "Greeting")
-            self.assertEqual(result["frontmatter"]["count"], 3)
-            self.assertEqual(result["content"], "Hello world")
+            assert result["title"] == "Greeting"
+            assert result["frontmatter"]["count"] == 3
+            assert result["content"] == "Hello world"
 
     def test_parse_file_frontmatter_in_body(self) -> None:
         """``---`` inside body (horizontal rules) does not affect parsing."""
@@ -117,31 +118,31 @@ class TestParseFile(unittest.TestCase):
             )
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["title"], "Doc")
+            assert result["title"] == "Doc"
             # Subsequent --- should remain part of the body
-            self.assertIn("---", result["content"])
-            self.assertIn("Paragraph two", result["content"])
+            assert "---" in result["content"]
+            assert "Paragraph two" in result["content"]
 
     def test_parse_file_no_frontmatter(self) -> None:
         """Files without frontmatter use filename stem as title."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "my-document.mdx", "Just body content, no frontmatter markers."
+                tmpdir, "my-document.mdx", "Just body content, no frontmatter markers.",
             )
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["title"], "my-document")
-            self.assertEqual(result["frontmatter"], {})
+            assert result["title"] == "my-document"
+            assert result["frontmatter"] == {}
 
     def test_parse_file_empty_frontmatter(self) -> None:
         """Empty frontmatter (``---`` ``---``) yields ``{}``, not ``None``."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "empty.mdx", "---\n---\nBody after empty frontmatter"
+                tmpdir, "empty.mdx", "---\n---\nBody after empty frontmatter",
             )
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["frontmatter"], {})
+            assert result["frontmatter"] == {}
 
     def test_parse_file_path_relative_to_root(self) -> None:
         """The ``path`` key is the file path relative to *root*."""
@@ -149,7 +150,7 @@ class TestParseFile(unittest.TestCase):
             fp = _create_file(tmpdir, "docs/guide.mdx", "---\ntitle: Guide\n---\nBody")
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["path"], "docs/guide.mdx")
+            assert result["path"] == "docs/guide.mdx"
 
 
 # ===========================================================================
@@ -168,13 +169,13 @@ class TestBuildIndex(unittest.TestCase):
             db_path = os.path.join(tmpdir, "test.db")
             build_index(root_dirs=[os.path.join(tmpdir, "docs")], db_path=db_path)
 
-            self.assertTrue(os.path.isfile(db_path))
+            assert os.path.isfile(db_path)
             conn = sqlite3.connect(db_path)
             cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = {row[0] for row in cur.fetchall()}
             conn.close()
-            self.assertIn("docs_fts", tables)
-            self.assertIn("file_metadata", tables)
+            assert "docs_fts" in tables
+            assert "file_metadata" in tables
 
     def test_build_index_content_searchable(self) -> None:
         """Indexed content is searchable via FTS5 MATCH queries."""
@@ -192,8 +193,8 @@ class TestBuildIndex(unittest.TestCase):
             cur = conn.execute("SELECT title FROM docs_fts WHERE docs_fts MATCH 'body'")
             rows = cur.fetchall()
             conn.close()
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0][0], "Hello World")
+            assert len(rows) == 1
+            assert rows[0][0] == "Hello World"
 
 
 # ===========================================================================
@@ -206,7 +207,8 @@ class TestIncrementalIndex(unittest.TestCase):
 
     def test_rebuild_no_changes_no_new_rows(self) -> None:
         """Re-running ``build_index()`` without file changes produces no
-        additional rows in ``docs_fts``."""
+        additional rows in ``docs_fts``.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             _create_file(tmpdir, "docs/test.mdx", "---\ntitle: Test\n---\nBody content")
 
@@ -223,7 +225,7 @@ class TestIncrementalIndex(unittest.TestCase):
             conn = sqlite3.connect(db_path)
             after = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
             conn.close()
-            self.assertEqual(before, after)
+            assert before == after
 
     def test_touch_file_reindexes_only_that_file(self) -> None:
         """Touching a single ``.mdx`` file only re-indexes that file."""
@@ -249,17 +251,17 @@ class TestIncrementalIndex(unittest.TestCase):
 
             conn = sqlite3.connect(db_path)
             rows = conn.execute(
-                "SELECT path, mtime FROM file_metadata ORDER BY path"
+                "SELECT path, mtime FROM file_metadata ORDER BY path",
             ).fetchall()
             conn.close()
 
             # All three should still be present
-            self.assertEqual(len(rows), 3)
+            assert len(rows) == 3
 
             # The entry for "b.mdx" should have the new mtime
             b_entries = [r for r in rows if r[0].endswith("b.mdx")]
-            self.assertEqual(len(b_entries), 1)
-            self.assertEqual(b_entries[0][1], b_mtime)
+            assert len(b_entries) == 1
+            assert b_entries[0][1] == b_mtime
 
 
 # ===========================================================================
@@ -276,28 +278,29 @@ class TestSectionAssignment(unittest.TestCase):
             fp = _create_file(tmpdir, "docs/guide.mdx", "---\ntitle: Guide\n---\nBody")
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["section"], "docs")
+            assert result["section"] == "docs"
 
     def test_section_internal(self) -> None:
         """Files under ``internal/`` have section ``'internal'``."""
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "internal/guide.mdx", "---\ntitle: Guide\n---\nBody"
+                tmpdir, "internal/guide.mdx", "---\ntitle: Guide\n---\nBody",
             )
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["section"], "internal")
+            assert result["section"] == "internal"
 
     def test_section_nested_path(self) -> None:
         """Section is determined by the first path component regardless of
-        nesting depth."""
+        nesting depth.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             fp = _create_file(
-                tmpdir, "docs/sub/dir/nested.mdx", "---\ntitle: Nested\n---\nBody"
+                tmpdir, "docs/sub/dir/nested.mdx", "---\ntitle: Nested\n---\nBody",
             )
 
             result = parse_file(fp, root=tmpdir)
-            self.assertEqual(result["section"], "docs")
+            assert result["section"] == "docs"
 
 
 # ===========================================================================
@@ -320,14 +323,14 @@ class TestCliEntryPoint(unittest.TestCase):
             main(root_dir=tmpdir)
 
             db_path = os.path.join(tmpdir, "wywy_docs", "docs_index.db")
-            self.assertTrue(os.path.isfile(db_path))
+            assert os.path.isfile(db_path)
 
             conn = sqlite3.connect(db_path)
             cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = {row[0] for row in cur.fetchall()}
             conn.close()
-            self.assertIn("docs_fts", tables)
-            self.assertIn("file_metadata", tables)
+            assert "docs_fts" in tables
+            assert "file_metadata" in tables
 
     def test_main_respects_root_argument(self) -> None:
         """``main(root_dir=...)`` build the index relative to the given root."""
@@ -338,12 +341,12 @@ class TestCliEntryPoint(unittest.TestCase):
             main(root_dir=tmpdir)
 
             db_path = os.path.join(tmpdir, "wywy_docs", "docs_index.db")
-            self.assertTrue(os.path.isfile(db_path))
+            assert os.path.isfile(db_path)
 
             conn = sqlite3.connect(db_path)
             count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
             conn.close()
-            self.assertEqual(count, 1)
+            assert count == 1
 
 
 if __name__ == "__main__":

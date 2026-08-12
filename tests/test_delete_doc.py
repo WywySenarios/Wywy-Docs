@@ -24,6 +24,7 @@ from tests.test_server import (
     setup_temp_wywy_root,
     verify_metadata,
 )
+import pytest
 
 HOST = "127.0.0.1"
 
@@ -112,7 +113,7 @@ class TestDeleteDocTool(unittest.TestCase):
                     "name": "delete_doc",
                     "arguments": {"path": path},
                 },
-            }
+            },
         )
 
     # ── Internal helpers ───────────────────────────────────────────────
@@ -128,31 +129,30 @@ class TestDeleteDocTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": term, "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", search_resp)
+        assert "result" in search_resp
         content = search_resp["result"]["content"]
         body_text = " ".join(str(item.get("text", "")) for item in content)
-        self.assertNotIn(term, body_text)
+        assert term not in body_text
 
     # ── Property 1: Delete existing doc ────────────────────────────────
 
     def test_delete_existing_doc(self) -> None:
         """Deleting an existing doc removes the file, metadata, and
-        index entry, and returns the success response."""
+        index entry, and returns the success response.
+        """
         name = self._testMethodName
         path_arg = f"docs/{name}.mdx"
 
         resp = self._call(path_arg)
-        self.assertIn(
-            "result", resp, msg=f"Expected result, got error: {resp.get('error')}"
-        )
+        assert "result" in resp, f"Expected result, got error: {resp.get('error')}"
         result = json.loads(resp["result"]["content"][0]["text"])
-        self.assertEqual(result, {"path": path_arg, "deleted": True})
+        assert result == {"path": path_arg, "deleted": True}
 
         # File gone from disk
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        self.assertFalse(os.path.isfile(full_path))
+        assert not os.path.isfile(full_path)
 
         # Metadata entry removed
         verify_metadata(self.root_dir, path_arg, present=False)
@@ -169,25 +169,23 @@ class TestDeleteDocTool(unittest.TestCase):
 
         # Sanity: file does NOT exist before the call
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        self.assertFalse(os.path.isfile(full_path))
+        assert not os.path.isfile(full_path)
 
         resp = self._call(path_arg)
-        self.assertIn(
-            "result", resp, msg=f"Expected result, got error: {resp.get('error')}"
-        )
+        assert "result" in resp, f"Expected result, got error: {resp.get('error')}"
         result = json.loads(resp["result"]["content"][0]["text"])
-        self.assertEqual(result, {"path": path_arg, "deleted": True})
+        assert result == {"path": path_arg, "deleted": True}
 
         # File still doesn't exist
-        self.assertFalse(os.path.isfile(full_path))
+        assert not os.path.isfile(full_path)
 
     # ── Property 3: Path traversal ─────────────────────────────────────
 
     def test_delete_path_traversal(self) -> None:
         """A path containing ``..`` returns JSON-RPC error -32602."""
         resp = self._call("docs/../outside/file.mdx")
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
 
     # ── Property 4: Symlink escape ─────────────────────────────────────
 
@@ -198,8 +196,8 @@ class TestDeleteDocTool(unittest.TestCase):
         os.symlink("/tmp", link_path)
         try:
             resp = self._call(f"docs/{link_name}/evil_file.mdx")
-            self.assertIn("error", resp)
-            self.assertEqual(resp["error"]["code"], -32602)
+            assert "error" in resp
+            assert resp["error"]["code"] == -32602
         finally:
             os.unlink(link_path)
 
@@ -207,39 +205,37 @@ class TestDeleteDocTool(unittest.TestCase):
 
     def test_delete_auto_appends_mdx(self) -> None:
         """Calling ``delete_doc`` without ``.mdx`` still deletes the
-        ``.mdx`` file on disk."""
+        ``.mdx`` file on disk.
+        """
         name = self._testMethodName
 
         # Call without the .mdx extension
         resp = self._call(f"docs/{name}")
-        self.assertIn(
-            "result", resp, msg=f"Expected result, got error: {resp.get('error')}"
-        )
+        assert "result" in resp, f"Expected result, got error: {resp.get('error')}"
         result = json.loads(resp["result"]["content"][0]["text"])
-        self.assertEqual(result, {"path": f"docs/{name}.mdx", "deleted": True})
+        assert result == {"path": f"docs/{name}.mdx", "deleted": True}
 
         # The .mdx file is gone from disk
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        self.assertFalse(os.path.isfile(full_path))
+        assert not os.path.isfile(full_path)
 
     # ── Property 6: Internal section ───────────────────────────────────
 
     def test_delete_internal_doc(self) -> None:
         """Deleting from the ``internal/`` section works identically to
-        the ``docs/`` section."""
+        the ``docs/`` section.
+        """
         name = self._testMethodName
         path_arg = f"internal/{name}.mdx"
 
         resp = self._call(path_arg)
-        self.assertIn(
-            "result", resp, msg=f"Expected result, got error: {resp.get('error')}"
-        )
+        assert "result" in resp, f"Expected result, got error: {resp.get('error')}"
         result = json.loads(resp["result"]["content"][0]["text"])
-        self.assertEqual(result, {"path": path_arg, "deleted": True})
+        assert result == {"path": path_arg, "deleted": True}
 
         # File gone from disk
         full_path = os.path.join(self.root_dir, "internal", f"{name}.mdx")
-        self.assertFalse(os.path.isfile(full_path))
+        assert not os.path.isfile(full_path)
 
         # Metadata entry removed
         verify_metadata(self.root_dir, path_arg, present=False)
@@ -251,10 +247,11 @@ class TestDeleteDocTool(unittest.TestCase):
 
     def test_delete_unknown_section(self) -> None:
         """A path outside ``docs/`` and ``internal/`` returns JSON-RPC
-        error -32602."""
+        error -32602.
+        """
         resp = self._call("other/file.mdx")
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
 
 
 # ===========================================================================
@@ -292,18 +289,15 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
         )
 
         # Sanity: file exists and is indexed
-        self.assertTrue(
-            os.path.isfile(
-                os.path.join(self.root_dir, "docs", "test_delete_os_remove_failure.mdx")
-            )
-        )
+        assert os.path.isfile(os.path.join(self.root_dir, "docs", "test_delete_os_remove_failure.mdx"))
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root_dir, ignore_errors=True)
 
     def test_delete_os_remove_failure_returns_error(self) -> None:
         """When ``os.remove`` raises ``PermissionError`` (subclass of
-        ``OSError``), the tool raises ``RuntimeError`` → -32603."""
+        ``OSError``), the tool raises ``RuntimeError`` → -32603.
+        """
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 
         server_mod._ROOT_DIR = self.root_dir  # type: ignore[reportPrivateUsage]
@@ -312,16 +306,12 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
             "wywy_docs.server.os.remove",
             side_effect=PermissionError("Permission denied"),
         ):
-            with self.assertRaises(RuntimeError) as ctx:
+            with pytest.raises(RuntimeError) as ctx:
                 server_mod.delete_doc(path="docs/test_delete_os_remove_failure.mdx")
-            self.assertIn("Permission denied", str(ctx.exception))
+            assert "Permission denied" in str(ctx.value)
 
         # The file should still be on disk since deletion failed
-        self.assertTrue(
-            os.path.isfile(
-                os.path.join(self.root_dir, "docs", "test_delete_os_remove_failure.mdx")
-            )
-        )
+        assert os.path.isfile(os.path.join(self.root_dir, "docs", "test_delete_os_remove_failure.mdx"))
 
 
 if __name__ == "__main__":

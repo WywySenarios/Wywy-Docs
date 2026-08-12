@@ -28,6 +28,7 @@ from tests.test_server import (
     setup_temp_wywy_root,
     verify_metadata,
 )
+import pytest
 
 HOST = "127.0.0.1"
 
@@ -123,14 +124,15 @@ class TestWriteDocTool(unittest.TestCase):
                         "frontmatter": frontmatter,
                     },
                 },
-            }
+            },
         )
 
     # ── Property 1 ─────────────────────────────────────────────────────
 
     def test_write_new_doc_creates_file(self) -> None:
         """Writing a new doc creates the ``.mdx`` file with frontmatter
-        containing *published* and *last_updated*."""
+        containing *published* and *last_updated*.
+        """
         name = self._testMethodName
         resp = self._call(
             "docs",
@@ -138,26 +140,27 @@ class TestWriteDocTool(unittest.TestCase):
             "# Hello\nBody.",
             frontmatter={"title": "New Doc", "key": "value"},
         )
-        self.assertIn("result", resp, msg=f"Expected result, got error: {resp}")
+        assert "result" in resp, f"Expected result, got error: {resp}"
         result = json.loads(resp["result"]["content"][0]["text"])
-        self.assertEqual(result["path"], f"docs/{name}.mdx")
+        assert result["path"] == f"docs/{name}.mdx"
 
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        self.assertTrue(os.path.isfile(full_path))
+        assert os.path.isfile(full_path)
 
         fm, body = _parse_frontmatter(full_path)
-        self.assertIn("published", fm)
-        self.assertIn("last_updated", fm)
-        self.assertEqual(fm.get("title"), "New Doc")
-        self.assertEqual(fm.get("key"), "value")
-        self.assertIn("# Hello", body)
+        assert "published" in fm
+        assert "last_updated" in fm
+        assert fm.get("title") == "New Doc"
+        assert fm.get("key") == "value"
+        assert "# Hello" in body
 
     # ── Property 2 ─────────────────────────────────────────────────────
 
     def test_write_update_preserves_published(self) -> None:
         """Updating preserves the original *published* value, updates
         *last_updated*, and keeps existing frontmatter keys unless
-        overridden."""
+        overridden.
+        """
         name = self._testMethodName
         create_file(
             self.root_dir,
@@ -177,30 +180,31 @@ class TestWriteDocTool(unittest.TestCase):
             "# Updated body",
             frontmatter={"title": "Updated"},
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
         result = json.loads(resp["result"]["content"][0]["text"])
-        self.assertEqual(result["path"], f"docs/{name}.mdx")
+        assert result["path"] == f"docs/{name}.mdx"
 
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
         fm, body = _parse_frontmatter(full_path)
 
         # published preserved
-        self.assertEqual(fm.get("published"), "2023-06-15T12:00:00")
+        assert fm.get("published") == "2023-06-15T12:00:00"
         # last_updated updated (rough check — time between call)
-        self.assertIn("last_updated", fm)
+        assert "last_updated" in fm
         # title overridden
-        self.assertEqual(fm.get("title"), "Updated")
+        assert fm.get("title") == "Updated"
         # desc preserved (not in user frontmatter)
-        self.assertEqual(fm.get("desc"), "original")
+        assert fm.get("desc") == "original"
         # tags preserved
-        self.assertEqual(fm.get("tags"), ["a", "b"])
-        self.assertIn("# Updated body", body)
+        assert fm.get("tags") == ["a", "b"]
+        assert "# Updated body" in body
 
     # ── Property 3 ─────────────────────────────────────────────────────
 
     def test_write_update_no_published_sets_current_time(self) -> None:
         """Updating a doc that has no *published* field sets *published*
-        to the current time."""
+        to the current time.
+        """
         name = self._testMethodName
         create_file(
             self.root_dir,
@@ -214,21 +218,22 @@ class TestWriteDocTool(unittest.TestCase):
             "# Updated",
             frontmatter={"title": "Now Has Published"},
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
 
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
         fm, _body = _parse_frontmatter(full_path)
-        self.assertIn("published", fm)
-        self.assertIn("last_updated", fm)
-        self.assertEqual(fm.get("title"), "Now Has Published")
+        assert "published" in fm
+        assert "last_updated" in fm
+        assert fm.get("title") == "Now Has Published"
         # desc should have been preserved from the original frontmatter
-        self.assertEqual(fm.get("desc"), "missing-pub")
+        assert fm.get("desc") == "missing-pub"
 
     # ── Property 4 ─────────────────────────────────────────────────────
 
     def test_write_update_no_frontmatter_sets_both_dates(self) -> None:
         """Updating a doc with no frontmatter at all succeeds and sets
-        both *published* and *last_updated* fresh."""
+        both *published* and *last_updated* fresh.
+        """
         name = self._testMethodName
         create_file(
             self.root_dir,
@@ -237,68 +242,71 @@ class TestWriteDocTool(unittest.TestCase):
         )
 
         resp = self._call("docs", name, "# New body")
-        self.assertIn("result", resp)
+        assert "result" in resp
 
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
         fm, body = _parse_frontmatter(full_path)
-        self.assertIn("published", fm)
-        self.assertIn("last_updated", fm)
-        self.assertIn("# New body", body)
+        assert "published" in fm
+        assert "last_updated" in fm
+        assert "# New body" in body
 
     # ── Property 5 ─────────────────────────────────────────────────────
 
     def test_write_no_frontmatter_arg_still_has_dates(self) -> None:
         """Calling ``write_doc`` with ``frontmatter=None`` still generates
-        *published* and *last_updated*."""
+        *published* and *last_updated*.
+        """
         name = self._testMethodName
         # New doc — no existing file
         resp = self._call("docs", name, "# Body", frontmatter=None)
-        self.assertIn("result", resp)
+        assert "result" in resp
 
         full_path = os.path.join(self.root_dir, "docs", f"{name}.mdx")
-        self.assertTrue(os.path.isfile(full_path))
+        assert os.path.isfile(full_path)
         fm, body = _parse_frontmatter(full_path)
-        self.assertIn("published", fm)
-        self.assertIn("last_updated", fm)
-        self.assertIn("# Body", body)
+        assert "published" in fm
+        assert "last_updated" in fm
+        assert "# Body" in body
 
     # ── Property 6 ─────────────────────────────────────────────────────
 
     def test_write_invalid_section_returns_error(self) -> None:
         """An invalid *section* returns JSON-RPC error -32602."""
         resp = self._call("invalid", "any-path", "body")
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
 
     # ── Property 7 ─────────────────────────────────────────────────────
 
     def test_write_path_traversal_returns_error(self) -> None:
         """A path containing ``..`` returns JSON-RPC error -32602."""
         resp = self._call("docs", "../outside/file", "body")
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
 
     # ── Property 8 ─────────────────────────────────────────────────────
 
     def test_write_non_existent_parent_dir_returns_error(self) -> None:
         """A path whose parent directory does not exist returns JSON-RPC
-        error -32602."""
+        error -32602.
+        """
         resp = self._call("docs", "nonexistent_parent_dir_12345/file", "body")
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
 
     # ── Property 9 ─────────────────────────────────────────────────────
 
     def test_write_symlink_escape_returns_error(self) -> None:
         """A path that escapes ``docs/`` or ``internal/`` via a symlink
-        returns JSON-RPC error -32602."""
+        returns JSON-RPC error -32602.
+        """
         link_name = f"escape_{self._testMethodName}"
         link_path = os.path.join(self.root_dir, "docs", link_name)
         os.symlink("/tmp", link_path)
         try:
             resp = self._call("docs", f"{link_name}/evil_file", "body")
-            self.assertIn("error", resp)
-            self.assertEqual(resp["error"]["code"], -32602)
+            assert "error" in resp
+            assert resp["error"]["code"] == -32602
         finally:
             os.unlink(link_path)
 
@@ -306,7 +314,8 @@ class TestWriteDocTool(unittest.TestCase):
 
     def test_write_triggers_reindex(self) -> None:
         """Writing triggers an incremental re-index: the new doc is
-        immediately searchable via ``search_docs``."""
+        immediately searchable via ``search_docs``.
+        """
         name = self._testMethodName
         unique_term = f"UNIQUE_SEARCH_TERM_{name}"
         resp = self._call(
@@ -315,7 +324,7 @@ class TestWriteDocTool(unittest.TestCase):
             f"# {unique_term}\nSearchable content.",
             frontmatter={"title": "Searchable Doc"},
         )
-        self.assertIn("result", resp)
+        assert "result" in resp
 
         # Search for the unique term via the shared client.
         search_resp = self.client.send_message(
@@ -327,34 +336,35 @@ class TestWriteDocTool(unittest.TestCase):
                     "name": "search_docs",
                     "arguments": {"query": unique_term, "max_results": 10},
                 },
-            }
+            },
         )
-        self.assertIn("result", search_resp)
+        assert "result" in search_resp
         content = search_resp["result"]["content"]
         body_text = " ".join(str(item.get("text", "")) for item in content)
-        self.assertIn(unique_term, body_text)
+        assert unique_term in body_text
 
     # ── Property 12 ────────────────────────────────────────────────────
 
     def test_write_reserved_frontmatter_rejected(self) -> None:
         """Frontmatter containing ``published`` or ``last_updated`` is
-        rejected with JSON-RPC error -32602."""
+        rejected with JSON-RPC error -32602.
+        """
         name = self._testMethodName
         # published
         resp = self._call(
-            "docs", name, "# Body", frontmatter={"published": "2024-01-01"}
+            "docs", name, "# Body", frontmatter={"published": "2024-01-01"},
         )
-        self.assertIn("error", resp)
-        self.assertEqual(resp["error"]["code"], -32602)
-        self.assertIn("reserved", resp["error"]["message"].lower())
+        assert "error" in resp
+        assert resp["error"]["code"] == -32602
+        assert "reserved" in resp["error"]["message"].lower()
 
         # last_updated
         name2 = f"{name}_lu"
         resp2 = self._call(
-            "docs", name2, "# Body", frontmatter={"last_updated": "2024-01-01"}
+            "docs", name2, "# Body", frontmatter={"last_updated": "2024-01-01"},
         )
-        self.assertIn("error", resp2)
-        self.assertEqual(resp2["error"]["code"], -32602)
+        assert "error" in resp2
+        assert resp2["error"]["code"] == -32602
 
 
 # ===========================================================================
@@ -404,7 +414,8 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
         self,
     ) -> None:
         """When ``build_index`` raises, the tool returns -32603 and
-        deletes the ``file_metadata`` entry for the just-written path."""
+        deletes the ``file_metadata`` entry for the just-written path.
+        """
         import wywy_docs.server as server_mod  # type: ignore[attr-defined]
 
         server_mod._ROOT_DIR = self.root_dir  # type: ignore[reportPrivateUsage]
@@ -413,14 +424,14 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
             "wywy_docs.server.build_index",
             side_effect=RuntimeError("Indexing failed"),
         ):
-            with self.assertRaises(RuntimeError) as ctx:
+            with pytest.raises(RuntimeError) as ctx:
                 server_mod.write_doc(
                     section="docs",
                     path="fail-test",
                     content="# Failed indexing",
                     frontmatter={"title": "Fail Test"},
                 )
-            self.assertIn("file written but index update failed", str(ctx.exception))
+            assert "file written but index update failed" in str(ctx.value)
 
         # The file_metadata entry for the new path must have been removed.
         verify_metadata(self.root_dir, "docs/fail-test.mdx", present=False)

@@ -15,6 +15,7 @@ import unittest
 import pydantic
 
 from wywy_docs import DocFrontmatter, Section
+import pytest
 
 
 class TestDocFrontmatter(unittest.TestCase):
@@ -23,29 +24,29 @@ class TestDocFrontmatter(unittest.TestCase):
     def test_empty_frontmatter_accepted(self) -> None:
         """``DocFrontmatter()`` accepts empty frontmatter dict."""
         fm = DocFrontmatter()
-        self.assertEqual(fm.model_dump(), {})
+        assert fm.model_dump() == {}
 
     def test_empty_dict_accepted(self) -> None:
         """``DocFrontmatter({})`` accepts empty dict."""
         fm = DocFrontmatter({})
-        self.assertEqual(fm.model_dump(), {})
+        assert fm.model_dump() == {}
 
     def test_extra_fields_preserved(self) -> None:
         """Arbitrary extra frontmatter fields are preserved."""
         fm = DocFrontmatter({"title": "Hello", "key": "value", "count": 3})
         dumped = fm.model_dump()
-        self.assertEqual(dumped["title"], "Hello")
-        self.assertEqual(dumped["key"], "value")
-        self.assertEqual(dumped["count"], 3)
+        assert dumped["title"] == "Hello"
+        assert dumped["key"] == "value"
+        assert dumped["count"] == 3
 
     def test_published_rejected(self) -> None:
         """``published`` key raises ``pydantic.ValidationError``."""
-        with self.assertRaises(pydantic.ValidationError):
+        with pytest.raises(pydantic.ValidationError):
             DocFrontmatter({"published": "2026-01-01"})
 
     def test_last_updated_rejected(self) -> None:
         """``last_updated`` key raises ``pydantic.ValidationError``."""
-        with self.assertRaises(pydantic.ValidationError):
+        with pytest.raises(pydantic.ValidationError):
             DocFrontmatter({"last_updated": "2026-01-01"})
 
 
@@ -54,15 +55,15 @@ class TestSectionType(unittest.TestCase):
 
     def test_section_is_importable(self) -> None:
         """``Section`` is importable from ``wywy_docs``."""
-        from wywy_docs import Section  # noqa: F811
+        from wywy_docs import Section
 
-        self.assertIsNotNone(Section)
+        assert Section is not None
 
     def test_section_values(self) -> None:
         """``Section`` accepts only ``"docs"`` and ``"internal"``."""
         from typing import get_args
 
         args = get_args(Section)
-        self.assertIn("docs", args)
-        self.assertIn("internal", args)
-        self.assertEqual(len(args), 2)
+        assert "docs" in args
+        assert "internal" in args
+        assert len(args) == 2
