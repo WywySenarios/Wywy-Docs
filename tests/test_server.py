@@ -22,19 +22,27 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from http.client import HTTPConnection, HTTPResponse
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 from urllib.error import URLError
 from urllib.request import urlopen
 
 import pytest
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 HOST = "127.0.0.1"
 DEFAULT_PORT = 2530
 SERVER_TIMEOUT = 10  # max seconds to wait for server startup
 RESPONSE_TIMEOUT = 10  # max seconds to wait for a JSON-RPC response
+
+# Server-lifecycle error messages (raised via a constant so the raise
+# statements stay short; kept at module level so the strings are greppable).
+_ERR_SSE_CLOSED = "SSE stream closed before receiving endpoint event"
+_ERR_NO_PROCESS = "Server process was not started"
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +179,7 @@ def build_test_index(root: str, files: dict[str, str]) -> str:
 
 
 @contextmanager
-def _with_server(root_dir: str, port: int):
+def _with_server(root_dir: str, port: int) -> Generator[ServerProcess, None, None]:
     """Start an MCP server subprocess for *root_dir* on *port*; stop on exit."""
     server = ServerProcess(root_dir, port)
     server.start()
@@ -224,7 +232,7 @@ def cleanup_ephemeral_files(root_dir: str, rel_paths: list[str]) -> None:
                     conn.commit()
                 finally:
                     conn.close()
-        except Exception:
+        except (OSError, sqlite3.Error):
             logger.warning("tearDown cleanup failed for %s", rel_path, exc_info=True)
 
 
@@ -263,9 +271,7 @@ class MCPClient:
         while True:
             raw = response.readline()
             if not raw:
-                raise ConnectionError(
-                    "SSE stream closed before receiving endpoint event",
-                )
+                raise ConnectionError(_ERR_SSE_CLOSED)
             line = raw.decode("utf-8").strip()
             if line.startswith("event: "):
                 event_type = line[7:]
@@ -325,13 +331,11 @@ class MCPClient:
                 elif line == "":
                     if event_type == "message" and data_buffer:
                         payload = "".join(data_buffer)
-                        try:
+                        with suppress(json.JSONDecodeError):
                             self._response_queue.put(json.loads(payload))
-                        except json.JSONDecodeError:
-                            pass
                     event_type = None
                     data_buffer = []
-            except Exception:
+            except Exception:  # noqa: BLE001 - daemon thread; absorb any stream error and end
                 break
 
     def send_message(self, body: JsonRpcRequest) -> JsonRpcResponse:
@@ -377,10 +381,8 @@ class MCPClient:
         """Shut down the SSE reader and close the connection."""
         self._reader_stop.set()
         if self._sse_conn is not None:
-            try:
+            with suppress(OSError):
                 self._sse_conn.close()
-            except Exception:
-                pass
 
 
 # ===========================================================================
@@ -421,7 +423,7 @@ class ServerProcess:
         env = os.environ.copy()
         env["PORT"] = str(self.port)
         env["WYWY_ROOT"] = self.root_dir
-        self.process = subprocess.Popen(
+        self.process = subprocess.Popen(  # noqa: S603 - static command, no user input
             [
                 shutil.which("uv") or "uv",
                 "run",
@@ -440,29 +442,32 @@ class ServerProcess:
         """Poll the /sse endpoint until it responds."""
         process = self.process
         if process is None:
-            raise RuntimeError("Server process was not started")
+            raise RuntimeError(_ERR_NO_PROCESS)
         deadline = time.time() + SERVER_TIMEOUT
         last_error: Exception | None = None
         while time.time() < deadline:
             # Quick check: if process exited early, abort.
             ret = process.poll()
             if ret is not None:
-                raise RuntimeError(
+                msg = (
                     f"Server process exited early with code {ret}. "
-                    f"stderr: {self.read_stderr()}",
+                    f"stderr: {self.read_stderr()}"
                 )
+                raise RuntimeError(msg)
             try:
                 resp = urlopen(f"http://{HOST}:{self.port}/sse", timeout=0.5)
                 resp.readline()
-                return
             except (URLError, ConnectionRefusedError, OSError) as e:
                 last_error = e
                 time.sleep(0.2)
-        raise RuntimeError(
+            else:
+                return
+        msg = (
             f"Server did not start within {SERVER_TIMEOUT}s. "
             f"Last error: {last_error}. "
-            f"stderr: {self.read_stderr()}",
+            f"stderr: {self.read_stderr()}"
         )
+        raise RuntimeError(msg)
 
     def read_stderr(self) -> str:
         """Read any captured stderr output from the process."""
@@ -471,7 +476,7 @@ class ServerProcess:
                 return self.process.stderr.read().decode("utf-8", errors="replace")[
                     :2000
                 ]
-            except Exception:
+            except OSError:
                 return "<unreadable>"
         return "<no stderr>"
 
@@ -570,12 +575,13 @@ class TestServerEndpoints(unittest.TestCase):
             ("import wywy_docs.indexer", "import wywy_docs.indexer; print('OK')"),
             ("import wywy_docs.server", "import wywy_docs.server; print('OK')"),
         ]:
-            r = subprocess.run(
+            r = subprocess.run(  # noqa: S603 - test literals only
                 [venv_python, "-c", code],
                 capture_output=True,
                 text=True,
                 timeout=10,
                 cwd=_PROJECT_ROOT,
+                check=False,  # returncode asserted below
             )
             assert r.returncode == 0, (
                 f"{label} FAILED: exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
@@ -586,7 +592,7 @@ class TestServerEndpoints(unittest.TestCase):
         env = os.environ.copy()
         env["PORT"] = "2530"  # production default, may be in use
         env["WYWY_ROOT"] = _PROJECT_ROOT
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # noqa: S603 - static production command
             [venv_python, "-m", "wywy_docs.server"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
