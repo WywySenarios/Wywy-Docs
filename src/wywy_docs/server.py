@@ -154,7 +154,7 @@ def _resolve_section_path(section: str, path: str) -> str:
 
 
 @mcp.tool()
-def search_docs(query: str, max_results: int = 10):
+def search_docs(query: str, max_results: int = 10) -> str:
     """Full-text search across documentation.
 
     Args:
@@ -200,7 +200,7 @@ def search_docs(query: str, max_results: int = 10):
 
 
 @mcp.tool()
-def get_doc(path: str):
+def get_doc(path: str) -> str:
     """Retrieve document content and frontmatter by path.
 
     Args:
@@ -225,7 +225,7 @@ def write_doc(
     path: str,
     content: str,
     frontmatter: dict[str, object] | None = None,
-):
+) -> str:
     """Create or update a documentation file.
 
     Args:
@@ -344,7 +344,7 @@ def write_doc(
 
 
 @mcp.tool()
-def delete_doc(path: str):
+def delete_doc(path: str) -> str:
     """Delete a documentation file.
 
     Args:
@@ -422,6 +422,13 @@ async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
     except Exception as e:
         # Boundary safety net: any unexpected error becomes INTERNAL_ERROR.
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e))) from e
+
+    if isinstance(result, tuple):
+        # FastMCP returns (content, structured_content) when a tool
+        # declares a return type annotation.  The unstructured content is
+        # what the tools previously produced; structured content is unused
+        # here to keep the response shape unchanged.
+        result = result[0]
 
     if isinstance(result, list):
         return ServerResult(CallToolResult(content=result, isError=False))
