@@ -19,7 +19,9 @@ class DocFrontmatter(BaseModel):
     model_config = {"extra": "allow"}  # type: ignore[assignment]
 
     def __init__(
-        self, _data: dict[str, object] | None = None, **kwargs: object
+        self,
+        _data: dict[str, object] | None = None,
+        **kwargs: object,
     ) -> None:
         """Accept a positional dict as an alternative to ``**kwargs``."""
         if _data is not None:
@@ -32,7 +34,7 @@ class DocFrontmatter(BaseModel):
         """Raise ``ValueError`` if ``published`` or ``last_updated`` are present."""
         if not isinstance(data, dict):
             return data
-        data_dict = cast(dict[str, object], data)
+        data_dict = cast("dict[str, object]", data)
         for key in ("published", "last_updated"):
             if key in data_dict:
                 msg = (

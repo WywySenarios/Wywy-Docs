@@ -48,7 +48,7 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
         Absolute path to the Wywy-Docs root directory (used to compute the
         relative *path* output key).
 
-    Returns
+    Returns:
     -------
     dict
         A dictionary with keys:
@@ -60,6 +60,7 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
         - **section**     – ``"docs"`` if path starts with ``docs/``,
                             ``"internal"`` if path starts with ``internal/``,
                             ``None`` otherwise.
+
     """
     with Path(filepath).open() as f:
         raw = f.read()
@@ -77,8 +78,8 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
                 try:
                     parsed = yaml.safe_load(fm_text)
                     if isinstance(parsed, dict):
-                        frontmatter = cast(dict[str, object], parsed)
-                        title = cast(str | None, frontmatter.get("title"))
+                        frontmatter = cast("dict[str, object]", parsed)
+                        title = cast("str | None", frontmatter.get("title"))
                 except yaml.YAMLError:
                     frontmatter = {}
                     content = raw
@@ -129,13 +130,13 @@ def build_index(root_dirs: list[str], db_path: str) -> None:
             section UNINDEXED,
             frontmatter_json UNINDEXED,
             tokenize='porter unicode61'
-        )"""
+        )""",
     )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS file_metadata (
             path TEXT PRIMARY KEY,
             mtime INTEGER
-        )"""
+        )""",
     )
 
     # Load known mtimes for incremental indexing
@@ -188,6 +189,7 @@ def main(root_dir: str | None = None) -> None:
     root_dir:
         Wywy-Docs root.  If ``None``, auto-detected from this module's
         location.
+
     """
     if root_dir is None:
         root_dir = str(Path.cwd())
