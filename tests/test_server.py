@@ -23,6 +23,7 @@ import threading
 import time
 import unittest
 from contextlib import contextmanager, suppress
+from http import HTTPStatus
 from http.client import HTTPConnection, HTTPResponse
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
@@ -30,6 +31,7 @@ from urllib.error import URLError
 from urllib.request import urlopen
 
 import pytest
+from mcp.types import INVALID_PARAMS
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -38,6 +40,7 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 2530
 SERVER_TIMEOUT = 10  # max seconds to wait for server startup
 RESPONSE_TIMEOUT = 10  # max seconds to wait for a JSON-RPC response
+STARTUP_BUDGET_SECONDS = 2.0  # max seconds a warm server may take to start
 
 # Server-lifecycle error messages (raised via a constant so the raise
 # statements stay short; kept at module level so the strings are greppable).
@@ -373,7 +376,9 @@ class MCPClient:
             )
             resp = conn.getresponse()
             resp.read()
-            assert resp.status == 202, f"Expected 202, got {resp.status}"
+            assert resp.status == HTTPStatus.ACCEPTED, (
+                f"Expected 202, got {resp.status}"
+            )
         finally:
             conn.close()
 
@@ -512,7 +517,7 @@ class TestServerEndpoints(unittest.TestCase):
         """GET /sse returns HTTP 200 (SSE connection established)."""
         with _with_server(self.root_dir, self.port):
             resp = urlopen(f"http://{HOST}:{self.port}/sse", timeout=5)
-            assert resp.status == 200
+            assert resp.status == HTTPStatus.OK
             # The connection stays open; read a bit to confirm SSE framing.
             chunk = resp.readline()
             assert b"event:" in chunk
@@ -533,7 +538,7 @@ class TestServerEndpoints(unittest.TestCase):
             )
             resp = conn.getresponse()
             resp.read()
-            assert resp.status == 202
+            assert resp.status == HTTPStatus.ACCEPTED
             conn.close()
             client.close()
 
@@ -584,7 +589,8 @@ class TestServerEndpoints(unittest.TestCase):
                 check=False,  # returncode asserted below
             )
             assert r.returncode == 0, (
-                f"{label} FAILED: exit={r.returncode} stdout={r.stdout!r} stderr={r.stderr!r}"
+                f"{label} FAILED: exit={r.returncode} "
+                f"stdout={r.stdout!r} stderr={r.stderr!r}"
             )
             assert "OK" in r.stdout, f"{label} did not print OK"
 
@@ -667,11 +673,28 @@ class TestSearchDocsTool(unittest.TestCase):
         build_test_index(
             cls.root_dir,
             {
-                "docs/hello.mdx": "---\ntitle: Hello World\n---\nThis is a shared_term greeting document.",
+                "docs/hello.mdx": (
+                    "---\n"
+                    "title: Hello World\n"
+                    "---\n"
+                    "This is a shared_term greeting document."
+                ),
                 "docs/goodbye.mdx": "---\ntitle: Goodbye\n---\nFarewell message.",
-                "docs/python.mdx": "---\ntitle: Python Guide\n---\nPython is a programming language.",
-                "docs/tree-map.mdx": "---\ntitle: Tree Map\n---\nThe tree-map visualization shows ancestry.",
-                "internal/guide.mdx": "---\ntitle: Internal Guide\n---\nThis is an internal guide with shared_term.",
+                "docs/python.mdx": (
+                    "---\ntitle: Python Guide\n---\nPython is a programming language."
+                ),
+                "docs/tree-map.mdx": (
+                    "---\n"
+                    "title: Tree Map\n"
+                    "---\n"
+                    "The tree-map visualization shows ancestry."
+                ),
+                "internal/guide.mdx": (
+                    "---\n"
+                    "title: Internal Guide\n"
+                    "---\n"
+                    "This is an internal guide with shared_term."
+                ),
             },
         )
         cls.server = ServerProcess(cls.root_dir, cls.port)
@@ -708,7 +731,10 @@ class TestSearchDocsTool(unittest.TestCase):
         assert len(content) > 0
 
     def test_search_docs_returns_section(self) -> None:
-        """Results include a ``section`` field ("docs" or "internal") matching the path prefix."""
+        """Results include a ``section`` field matching the path prefix.
+
+        The section is ``"docs"`` or ``"internal"``.
+        """
         resp = self.client.send_message(
             {
                 "jsonrpc": "2.0",
@@ -749,11 +775,14 @@ class TestSearchDocsTool(unittest.TestCase):
             },
         )
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
         assert "query must be a non-empty string" in resp["error"]["message"]
 
     def test_search_docs_operator_soup_is_literal(self) -> None:
-        """Operator soup like ``a OR OR b`` is treated as literal text, not FTS5 syntax."""
+        """Operator soup like ``a OR OR b`` is treated as literal text.
+
+        The text is not interpreted as FTS5 operator syntax.
+        """
         resp = self.client.send_message(
             {
                 "jsonrpc": "2.0",
@@ -773,7 +802,10 @@ class TestSearchDocsTool(unittest.TestCase):
         assert results == []
 
     def test_search_docs_hyphenated_query_returns_results(self) -> None:
-        """A hyphenated query is literal text, returning the matching doc instead of -32603."""
+        """A hyphenated query is literal text, returning the matching doc.
+
+        The server returns a result instead of a -32603 error.
+        """
         resp = self.client.send_message(
             {
                 "jsonrpc": "2.0",
@@ -822,7 +854,7 @@ class TestSearchDocsTool(unittest.TestCase):
             },
         )
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
         assert "query must be a non-empty string" in resp["error"]["message"]
 
     def test_search_docs_nul_byte_query_does_not_error(self) -> None:
@@ -923,7 +955,7 @@ class TestGetDocTool(unittest.TestCase):
             },
         )
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
         assert "document not found" in resp["error"]["message"]
 
 
@@ -1164,7 +1196,7 @@ class TestServerStartupTime(unittest.TestCase):
         server.start()
         elapsed = time.time() - start
         server.stop()
-        assert elapsed < 2.0
+        assert elapsed < STARTUP_BUDGET_SECONDS
 
 
 if __name__ == "__main__":

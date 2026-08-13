@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from mcp.types import INVALID_PARAMS
 
 from tests.test_server import (
     JsonRpcResponse,
@@ -35,6 +36,9 @@ HOST = "127.0.0.1"
 
 # ── Frontmatter parser helper ──────────────────────────────────────────
 
+# Splitting on "---" yields 3 parts: header, frontmatter, body.
+_FRONTMATTER_PARTS = 3
+
 
 def _parse_frontmatter(filepath: Path) -> tuple[dict[str, object], str]:
     """Read *filepath* and return ``(frontmatter_dict, body_text)``."""
@@ -42,7 +46,7 @@ def _parse_frontmatter(filepath: Path) -> tuple[dict[str, object], str]:
         raw = f.read()
     if raw.startswith("---"):
         parts = raw.split("---", 2)
-        if len(parts) >= 3:
+        if len(parts) >= _FRONTMATTER_PARTS:
             fm = cast("dict[str, object]", yaml.safe_load(parts[1]) or {})
             body = parts[2].strip()
             return dict(fm), body
@@ -281,7 +285,7 @@ class TestWriteDocTool(unittest.TestCase):
         """An invalid *section* returns JSON-RPC error -32602."""
         resp = self._call("invalid", "any-path", "body")
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
 
     # ── Property 7 ─────────────────────────────────────────────────────
 
@@ -289,7 +293,7 @@ class TestWriteDocTool(unittest.TestCase):
         """A path containing ``..`` returns JSON-RPC error -32602."""
         resp = self._call("docs", "../outside/file", "body")
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
 
     # ── Property 8 ─────────────────────────────────────────────────────
 
@@ -300,7 +304,7 @@ class TestWriteDocTool(unittest.TestCase):
         """
         resp = self._call("docs", "nonexistent_parent_dir_12345/file", "body")
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
 
     # ── Property 9 ─────────────────────────────────────────────────────
 
@@ -315,7 +319,7 @@ class TestWriteDocTool(unittest.TestCase):
         try:
             resp = self._call("docs", f"{link_name}/evil_file", "body")
             assert "error" in resp
-            assert resp["error"]["code"] == -32602
+            assert resp["error"]["code"] == INVALID_PARAMS
         finally:
             link_path.unlink()
 
@@ -370,7 +374,7 @@ class TestWriteDocTool(unittest.TestCase):
             frontmatter={"published": "2024-01-01"},
         )
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
         assert "reserved" in resp["error"]["message"].lower()
 
         # last_updated
@@ -382,7 +386,7 @@ class TestWriteDocTool(unittest.TestCase):
             frontmatter={"last_updated": "2024-01-01"},
         )
         assert "error" in resp2
-        assert resp2["error"]["code"] == -32602
+        assert resp2["error"]["code"] == INVALID_PARAMS
 
 
 # ===========================================================================

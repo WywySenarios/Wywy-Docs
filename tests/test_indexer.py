@@ -58,7 +58,7 @@ class TestScanFiles(unittest.TestCase):
                     str(Path(tmpdir) / "internal"),
                 ],
             )
-            assert len(result) == 3
+            assert len(result) == len(expected)
             for fp in expected:
                 assert fp in result
 
@@ -109,7 +109,7 @@ class TestParseFile(unittest.TestCase):
 
             result = parse_file(fp, root=tmpdir)
             assert result["title"] == "Greeting"
-            assert result["frontmatter"]["count"] == 3
+            assert result["frontmatter"]["count"] == 3  # noqa: PLR2004 - fixture value above
             assert result["content"] == "Hello world"
 
     def test_parse_file_frontmatter_in_body(self) -> None:
@@ -288,7 +288,7 @@ class TestIncrementalIndex(unittest.TestCase):
             conn.close()
 
             # All three should still be present
-            assert len(rows) == 3
+            assert len(rows) == len(files)
 
             # The entry for "b.mdx" should have the new mtime
             b_entries = [r for r in rows if r[0].endswith("b.mdx")]

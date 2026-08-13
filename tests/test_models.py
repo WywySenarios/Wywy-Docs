@@ -1,4 +1,4 @@
-"""Tests for ``wywy_docs.models`` — ``DocFrontmatter`` Pydantic model and ``Section`` literal type.
+"""Tests for ``wywy_docs.models`` — ``DocFrontmatter`` model and ``Section`` type.
 
 Verifies:
 - ``DocFrontmatter`` and ``Section`` are importable from ``wywy_docs``
@@ -37,7 +37,7 @@ class TestDocFrontmatter(unittest.TestCase):
         dumped = fm.model_dump()
         assert dumped["title"] == "Hello"
         assert dumped["key"] == "value"
-        assert dumped["count"] == 3
+        assert dumped["count"] == 3  # noqa: PLR2004 - fixture value above
 
     def test_published_rejected(self) -> None:
         """``published`` key raises ``pydantic.ValidationError``."""
@@ -64,6 +64,4 @@ class TestSectionType(unittest.TestCase):
         from typing import get_args
 
         args = get_args(Section)
-        assert "docs" in args
-        assert "internal" in args
-        assert len(args) == 2
+        assert set(args) == {"docs", "internal"}

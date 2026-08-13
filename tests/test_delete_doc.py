@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from mcp.types import INVALID_PARAMS
 
 from tests.test_server import (
     JsonRpcResponse,
@@ -189,7 +190,7 @@ class TestDeleteDocTool(unittest.TestCase):
         """A path containing ``..`` returns JSON-RPC error -32602."""
         resp = self._call("docs/../outside/file.mdx")
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
 
     # ── Property 4: Symlink escape ─────────────────────────────────────
 
@@ -201,7 +202,7 @@ class TestDeleteDocTool(unittest.TestCase):
         try:
             resp = self._call(f"docs/{link_name}/evil_file.mdx")
             assert "error" in resp
-            assert resp["error"]["code"] == -32602
+            assert resp["error"]["code"] == INVALID_PARAMS
         finally:
             link_path.unlink()
 
@@ -255,7 +256,7 @@ class TestDeleteDocTool(unittest.TestCase):
         """
         resp = self._call("other/file.mdx")
         assert "error" in resp
-        assert resp["error"]["code"] == -32602
+        assert resp["error"]["code"] == INVALID_PARAMS
 
 
 # ===========================================================================
