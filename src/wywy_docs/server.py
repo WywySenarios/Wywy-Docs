@@ -21,11 +21,11 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import McpError
 from mcp.types import (
+    INTERNAL_ERROR,
+    INVALID_PARAMS,
     CallToolRequest,
     CallToolResult,
     ErrorData,
-    INVALID_PARAMS,
-    INTERNAL_ERROR,
     ServerResult,
     TextContent,
 )
@@ -95,7 +95,8 @@ def _normalize_doc_path(path: str) -> str:
     path = path.strip("/")
 
     if ".." in path.split("/"):
-        raise ValueError("path traversal ('..') is not allowed")
+        msg = "path traversal ('..') is not allowed"
+        raise ValueError(msg)
 
     if not path.endswith(".mdx"):
         path = path + ".mdx"
@@ -115,10 +116,11 @@ def _sanitize_query(query: str) -> str:
         ValueError: If no tokens remain after sanitization.
 
     """
-    _strip = {ord('"'): None, **{i: None for i in range(0x20)}}
+    _strip = {ord('"'): None, **dict.fromkeys(range(32))}
     tokens = query.translate(_strip).split()
     if not tokens:
-        raise ValueError("query must be a non-empty string")
+        msg = "query must be a non-empty string"
+        raise ValueError(msg)
     return " ".join(f'"{t}"' for t in tokens)
 
 
@@ -143,7 +145,8 @@ def _resolve_section_path(section: str, path: str) -> str:
     real_abs = os.path.realpath(abs_path)
     real_prefix = os.path.realpath(section_dir)
     if not real_abs.startswith(real_prefix + "/") and real_abs != real_prefix:
-        raise ValueError("path escapes the allowed directory via symlink")
+        msg = "path escapes the allowed directory via symlink"
+        raise ValueError(msg)
     return abs_path
 
 
@@ -160,7 +163,8 @@ def search_docs(query: str, max_results: int = 10):
 
     """
     if not query or not query.strip():
-        raise ValueError("query must be a non-empty string")
+        msg = "query must be a non-empty string"
+        raise ValueError(msg)
     sanitized = _sanitize_query(query)
     db = _db_path()
     conn: sqlite3.Connection | None = None
@@ -189,7 +193,7 @@ def search_docs(query: str, max_results: int = 10):
         ]
         return json.dumps(results)
     except sqlite3.OperationalError as e:
-        raise RuntimeError(str(e))
+        raise RuntimeError(str(e)) from e
     finally:
         if conn is not None:
             conn.close()
@@ -206,7 +210,8 @@ def get_doc(path: str):
     path = _normalize_doc_path(path)
     abs_path = str(Path(_ROOT_DIR) / path)
     if not Path(abs_path).is_file():
-        raise ValueError("document not found")
+        msg = "document not found"
+        raise ValueError(msg)
     parsed = parse_file(abs_path, root=_ROOT_DIR)
     return json.dumps(
         {"content": parsed["content"], "frontmatter": parsed["frontmatter"]},
@@ -237,7 +242,8 @@ def write_doc(
     # Check parent directory exists
     parent = Path(abs_path).parent
     if not parent.is_dir():
-        raise ValueError("parent directory does not exist")
+        msg = "parent directory does not exist"
+        raise ValueError(msg)
 
     # Normalise frontmatter
     if frontmatter is None:
@@ -247,7 +253,7 @@ def write_doc(
     try:
         DocFrontmatter(frontmatter)
     except ValueError as e:
-        raise ValueError(str(e))
+        raise ValueError(str(e)) from e
 
     # ── Read existing file for merge ────────────────────────────────
     existing_fm: dict[str, object] = {}
@@ -255,8 +261,12 @@ def write_doc(
         try:
             parsed = parse_file(abs_path, root=_ROOT_DIR)
             existing_fm = parsed["frontmatter"]
-        except Exception:
-            pass
+        except OSError:
+            logger.debug(
+                "Failed to read existing frontmatter for %s",
+                abs_path,
+                exc_info=True,
+            )
 
     # Filter out reserved fields from existing frontmatter
     existing_filtered = {
@@ -302,7 +312,7 @@ def write_doc(
             f.write(full_content)
         Path(tmp_path).rename(abs_path)
     except OSError as e:
-        raise RuntimeError(str(e))
+        raise RuntimeError(str(e)) from e
 
     # ── Re-index ────────────────────────────────────────────────────
     db_path = _db_path()
@@ -310,8 +320,10 @@ def write_doc(
     try:
         build_index(root_dirs=[docs_dir, internal_dir], db_path=db_path)
     except Exception as e:
-        logger.error("Index update failed after write: %s", e)
-        # Clean up file_metadata entry for the just-written path
+        # Any re-index failure must still clean up and report; `from e`
+        # keeps the original error visible.
+        logger.exception("Index update failed after write")
+        # Clean up file_metadata entry for the just-written path (best-effort)
         try:
             conn = sqlite3.connect(db_path)
             conn.execute(
@@ -320,9 +332,13 @@ def write_doc(
             )
             conn.commit()
             conn.close()
-        except Exception:
-            pass
-        raise RuntimeError(f"file written but index update failed: {e}")
+        except sqlite3.Error:
+            logger.debug(
+                "Failed to clean up file_metadata after failed re-index",
+                exc_info=True,
+            )
+        msg = f"file written but index update failed: {e}"
+        raise RuntimeError(msg) from e
 
     return json.dumps({"path": f"{section}/{path}"})
 
@@ -343,7 +359,8 @@ def delete_doc(path: str):
     elif path.startswith("internal/"):
         section = "internal"
     else:
-        raise ValueError("path must be under docs/ or internal/")
+        msg = "path must be under docs/ or internal/"
+        raise ValueError(msg)
 
     # Strip section prefix and normalize
     path = path[len(section) + 1 :]
@@ -356,7 +373,7 @@ def delete_doc(path: str):
     except FileNotFoundError:
         pass
     except OSError as e:
-        raise RuntimeError(str(e))
+        raise RuntimeError(str(e)) from e
 
     # Clean index entries
     rel_path = f"{section}/{path}"
@@ -368,7 +385,7 @@ def delete_doc(path: str):
         conn.execute("DELETE FROM file_metadata WHERE path = ?", (rel_path,))
         conn.commit()
     except sqlite3.OperationalError as e:
-        raise RuntimeError(str(e))
+        raise RuntimeError(str(e)) from e
     finally:
         if conn is not None:
             conn.close()
@@ -394,12 +411,17 @@ async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
     except ToolError as e:
         cause = e.__cause__
         if isinstance(cause, ValueError):
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(cause)))
-        elif isinstance(cause, RuntimeError):
-            raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(cause)))
-        raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e)))
+            raise McpError(
+                ErrorData(code=INVALID_PARAMS, message=str(cause)),
+            ) from cause
+        if isinstance(cause, RuntimeError):
+            raise McpError(
+                ErrorData(code=INTERNAL_ERROR, message=str(cause)),
+            ) from cause
+        raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e))) from e
     except Exception as e:
-        raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e)))
+        # Boundary safety net: any unexpected error becomes INTERNAL_ERROR.
+        raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e))) from e
 
     if isinstance(result, list):
         return ServerResult(CallToolResult(content=result, isError=False))
@@ -407,7 +429,7 @@ async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
         CallToolResult(
             content=[TextContent(type="text", text=str(result))],
             isError=False,
-        )
+        ),
     )
 
 
@@ -421,14 +443,16 @@ mcp._mcp_server.request_handlers[CallToolRequest] = _call_tool_handler  # type: 
 def main() -> None:
     """Run the MCP SSE server, resolving root dir and port from env/args."""
     logging.basicConfig(
-        level=logging.INFO, format="wywy-docs: %(levelname)s %(message)s"
+        level=logging.INFO,
+        format="wywy-docs: %(levelname)s %(message)s",
     )
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int)
     args, _ = parser.parse_known_args()
     global _ROOT_DIR
     _ROOT_DIR = os.environ.get(  # type: ignore[reportConstantRedefinition]
-        "WYWY_DOCS_DIR", os.environ.get("WYWY_ROOT", str(Path.cwd()))
+        "WYWY_DOCS_DIR",
+        os.environ.get("WYWY_ROOT", str(Path.cwd())),
     )
     _ensure_index(_ROOT_DIR)
     port = args.port if args.port is not None else int(os.environ.get("PORT", "2530"))
