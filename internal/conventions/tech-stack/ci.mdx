@@ -1,7 +1,7 @@
 ---
 title: CI Conventions
 published: '2026-07-30T03:57:44'
-last_updated: '2026-07-30T03:57:44'
+last_updated: '2026-08-10T00:27:18'
 ---
 
 > **Language:** Bash — see [`languages/bash.mdx`](../languages/bash.mdx).
@@ -12,11 +12,39 @@ Every Wywy repository **MUST** have a root-level `test.sh` script as the sole en
 
 The `test.sh` script is responsible for:
 
-- Starting all required services (via `docker compose up`)
+- Starting all required services **if the suite needs them** — the mechanism is repo-specific (see [Service lifecycle](#service-lifecycle))
 - Running test suites
-- Collecting exit codes from all test containers
-- Tearing down services
+- Collecting exit codes from all test suites
+- Tearing down any services it started
 - Exiting with a non-zero code if **any** test suite failed
+
+### Test suites and the entrypoint router
+
+A repo may have more than one test suite — for example a fast `smoke` suite for pre-commit/push and a heavier `deployment`/staging suite that requires live infrastructure.
+
+- **Single suite:** `test.sh` runs it directly.
+- **Multiple suites:** `test.sh` becomes a **thin entrypoint router**. It contains no test logic itself — it maps a suite name (or a default) to a per-suite script under `scripts/tests/**` and delegates. Each suite script is readable and independently runnable; `test.sh` merely picks one and aggregates exit codes.
+
+The rule that keeps this from becoming a monolith: **`test.sh` dispatches, suite scripts do the work.**
+
+Example shape:
+
+```text
+test.sh
+scripts/tests/
+  smoke.sh
+  unit.sh
+  deployment.sh
+```
+
+```bash
+case "${1:-smoke}" in
+  smoke)      scripts/tests/smoke.sh ;;
+  unit)       scripts/tests/unit.sh ;;
+  deployment) scripts/tests/deployment.sh ;;
+  *) echo "Usage: $0 [suite]" >&2; exit 1 ;;
+esac
+```
 
 ## Script hardening
 
@@ -39,14 +67,11 @@ SCRIPT_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 cd "$SCRIPT_DIR"
 ```
 
-This ensures that:
-
-- `docker compose -f` paths (which are resolved by Docker Compose relative to the process CWD) work correctly.
-- Local config/log paths are found relative to the repo root.
+This ensures that tool-relative paths (e.g. `docker compose -f`) and local config/log paths resolve correctly regardless of the process CWD.
 
 ### Relative paths from SCRIPT_DIR
 
-All paths in `test.sh` — compose file paths, config references, log directory references — **MUST** be relative to `SCRIPT_DIR`. Never use absolute paths that embed a specific deployment path.
+All paths in `test.sh` — tool file paths, config references, log directory references, and any suite scripts — **MUST** be relative to `SCRIPT_DIR`. Never use absolute paths that embed a specific deployment path.
 
 ## Config provisioning
 
@@ -64,7 +89,11 @@ In CI, the runner downloads and stages config before invoking `test.sh`. Locally
 
 ## Service lifecycle
 
-`test.sh` manages its services via Docker Compose. The compose command **MUST** use absolute or `SCRIPT_DIR`-relative `-f` paths (safe because of the mandatory `cd "$SCRIPT_DIR"` at the top):
+`test.sh` is responsible for the lifecycle of any services its suites need: start them, run the suites, tear them down. Cleanup **MUST** happen on any exit path (success, failure, SIGINT, SIGTERM) — use a `trap` on `EXIT`.
+
+The startup mechanism is **repo-specific** — this convention does not mandate a tool. Common patterns:
+
+**docker compose (service repos):**
 
 ```bash
 COMPOSE="docker compose \
@@ -72,17 +101,19 @@ COMPOSE="docker compose \
   -f docker/docker-compose.test.yml"
 ```
 
-Cleanup **MUST** happen on any exit path (success, failure, SIGINT, SIGTERM). Use a `trap` on `EXIT` to tear down services.
+**KinD or similar (K8s control repos)** — pattern coming soon.
+
+**No services (control/ops repos):** tests target pre-existing infrastructure (clusters, VMs); `test.sh` starts nothing and has nothing to tear down.
 
 ## Error handling
 
 `test.sh` **MUST** use `set -euo pipefail` (standard bash convention).
 
-If `docker compose up` fails, the script **MUST** dump container logs and exit non-zero, so CI can surface the failure reason without a separate log-collection step.
+If service startup fails, the script **MUST** dump the service logs and exit non-zero, so CI can surface the failure reason without a separate log-collection step.
 
 ## Exit codes
 
-`test.sh` **MUST** exit 0 if all test suites passed, non-zero if any suite failed. Aggregate exit codes from all test containers — do not short-circuit on the first failure.
+`test.sh` **MUST** exit 0 if all test suites passed, non-zero if any suite failed. Aggregate exit codes from all suites — do not short-circuit on the first failure.
 
 ## Related conventions
 

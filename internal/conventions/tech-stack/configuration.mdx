@@ -1,6 +1,7 @@
 ---
 title: Configuration Conventions
-published: 2026-06-05T00:00:00
+published: '2026-06-05T00:00:00'
+last_updated: '2026-08-09T14:34:29'
 ---
 
 > **Cross-cutting** — applies to all services regardless of language.
@@ -69,6 +70,41 @@ PBS_HOST=my-backup-machine-2
 ```
 
 The actual hostname values belong in the deployed `.env` file on each machine, not in the example templates. This keeps templates portable and prevents accidental hostname leakage into CI or test environments.
+
+## Template placeholders
+
+Two notations, split by file type:
+
+### `{{NAME}}` — default (cloud-init scripts, config templates)
+
+Committed template files (cloud-init snippets, `config/db/*`, `*.template`) mark substitution points with `{{NAME}}`:
+
+- `{{NAME}}` appears **only on rule/data lines — never in comments**.
+- Comments and documentation reference placeholders as `<NAME>` (angle brackets); this prose form is never substituted.
+- Renderers must be **comment-aware**: lines starting with `#` (after optional whitespace) pass through untouched.
+- Leftover-placeholder guards scan **non-comment lines** for `{{` and fail the render if any survive.
+
+✅ **Do this:**
+```apache
+# Calico masquerades pod -> LAN traffic to the node IP, so postgres sees
+# the worker IP, never the pod CIDR (<K8S_WORKER_IPS>).
+{{K8S_WORKER_IPS}}
+```
+
+❌ **Don't do this** — angle-bracket tokens get confused with comment references, and `{{NAME}}` inside a comment gets expanded by a non-comment-aware renderer (or trips the leftover guard):
+```apache
+# <K8S_WORKER_IPS> is expanded below
+<K8S_WORKER_IPS>
+```
+
+### `<NAME>` — Proxmox preseed files
+
+`scripts/install/preseeds/proxmox/preseed.cfg` uses `<tag>` tokens (`<hostname>`, `<target_disk>`, `<netiface>`, `<extrapackages>`), substituted by `build-proxmox-iso.sh` via `sed`. This is the established preseed notation — **do not introduce `{{}}` in preseed files**. The preseed's comments reference the same `<tag>` form; that is the token notation there, not a comment-prose convention.
+
+### In use
+
+- `{{NAME}}`: `scripts/proxmox/vm/cloud-init/database-vm.yaml.template` (`{{BOOTSTRAP_B64}}`, `{{PGDG_KEY_B64}}`), `k8s-worker.yaml.template` (`{{NODE_ROLE}}`), `config/db/pg_hba.conf` (`{{K8S_WORKER_IPS}}`, `{{K8S_POD_CIDR}}`). Renderers: `scripts/proxmox/vm/db/update-pg-hba.sh` (comment-aware awk) and `scripts/proxmox/vm/db/create-template.sh` (sed — safe only because comments use `<NAME>`).
+- `<NAME>`: `scripts/install/preseeds/proxmox/preseed.cfg`, rendered by `build-proxmox-iso.sh`.
 
 ## YAML config
 

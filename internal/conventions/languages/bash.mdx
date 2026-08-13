@@ -1,7 +1,7 @@
 ---
 title: Bash Scripting Conventions
 published: '2026-06-05T00:00:00'
-last_updated: '2026-08-07T02:50:58'
+last_updated: '2026-08-10T02:01:29'
 ---
 
 ## Shebang
@@ -83,6 +83,68 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 sed -e "s|{{VAR}}|$value|g" "$TEMPLATE" >"$TMP_DIR/rendered.yaml"
 scp "$TMP_DIR/rendered.yaml" "$host:~/"
 ```
+
+## Secrets on the command line
+
+Bash records every command typed at an interactive prompt in `~/.bash_history`, and a running command's arguments are visible in the process table to the same user and to root (`ps`; `/proc/<pid>/cmdline`). A secret typed on a command line therefore lands in **two** places it must never be: history and process argv.
+
+This applies to every secret — passwords, tokens, keys — regardless of the tool. The mechanism is the same for `sops`, `psql`, `curl`, `openssl`, or anything else.
+
+### What leaks
+
+Any command that takes the secret as an argument or env prefix:
+
+```bash
+# LEAKS: secret is an echo argument (history + process table)
+echo 'hunter2' | sops --encrypt /dev/stdin
+
+# LEAKS: secret is in the remote command's argv (local history + remote process table)
+ssh host "sudo -u postgres psql -c \"ALTER USER postgres PASSWORD 'hunter2';\""
+
+# LEAKS: secret as a flag argument
+curl -u alice:hunter2 https://example.com/api
+
+# LEAKS: env prefix is recorded in history and readable via /proc/<pid>/environ
+API_KEY=hunter2 ./deploy.sh
+
+# LEAKS: heredoc content typed at an interactive prompt is recorded in history
+ssh host "cat > secret.txt" <<EOF
+hunter2
+EOF
+```
+
+A heredoc inside a **script file** is safe from history (the file is the source), but anything typed at the prompt is history material — including heredoc bodies.
+
+### Safe pattern: prompt + stdin
+
+Never put the value on the command line. Read it hidden with `read -rs`, then feed it over stdin:
+
+```bash
+read -rsp "Password: " secret; echo
+printf '%s' "$secret" | command-that-reads-stdin
+```
+
+`printf` is a bash builtin: it runs inside the current shell, so the value never becomes a new process's argv — `/proc/<pid>/cmdline` still shows only the script's own invocation. The pipeline sends the value to the command's stdin, which is exactly what `sops` (raw input) and `psql` read.
+
+For commands that need a file rather than stdin, write the value to a private temp file and clean up with a trap:
+
+```bash
+SECRET_FILE="$(mktemp)"
+trap 'rm -f "$SECRET_FILE"' EXIT
+chmod 600 "$SECRET_FILE"
+printf '%s' "$secret" > "$SECRET_FILE"
+```
+
+### Hygiene (defense in depth, not a guarantee)
+
+- `HISTCONTROL=ignorespace` in `~/.bashrc` — commands prefixed with a space are not recorded. Easy to forget; never rely on it for a secret.
+- `set +o history` / `unset HISTFILE` for a sensitive session.
+- Prefer a script file over an interactive one-liner: the secret is never typed, and the script uses the safe pattern above.
+- Best: don't type secrets at all — pull from a password manager, keyring, or agent.
+
+### Rule
+
+Scripts and documentation in this repo MUST NOT instruct the user to type a secret into a command — no `echo '<secret>' |`, no inline `PASSWORD '<secret>'` in `psql -c`, no `-u user:pass`. Provide an interactive helper that prompts with `read -rs` and transports the secret via stdin. `docs/sops-setup.mdx` shows the sops-specific application.
 
 ## Exit codes
 

@@ -1,6 +1,7 @@
 ---
 title: SOPS + age Setup
-published: 2026-07-23T02:48:37+00:00
+published: '2026-07-23T02:48:37+00:00'
+last_updated: '2026-08-10T02:42:17'
 ---
 
 This guide walks through setting up [SOPS](https://github.com/getsops/sops) with the [age](https://age-encryption.org/) encryption backend to store secrets safely in this repository. Once configured, encrypted secrets can be committed to git and decrypted by ArgoCD via a Config Management Plugin during sync.
@@ -53,9 +54,13 @@ The repository already has a `.sops.yaml` at the root. Paste your public key in:
 creation_rules:
   - path_regex: secrets/.*
     age: age1abc123def456...
+  # Raw secrets piped over stdin (e.g. set-db-password.sh) don't match
+  # secrets/.*; this rule lets `sops --encrypt /dev/stdin` pick the age key.
+  - path_regex: /dev/stdin
+    age: age1abc123def456...
 ```
 
-This tells SOPS to encrypt all files under `secrets/` with your age key.
+This tells SOPS to encrypt all files under `secrets/` — and any raw value piped over stdin — with your age key.
 
 ## 5. Encrypt a secret
 
@@ -92,6 +97,17 @@ sops --decrypt secrets/admin.txt.sops > secrets/admin.txt
 ## 7. Usage notes
 
 - **Never commit plaintext secrets** — once a file is encrypted, delete the plaintext version and only commit the `.sops` or `.enc` file.
+- **Never put a secret on a command line** — `echo '<secret>' | sops ...` stores the secret in your shell history (`~/.bash_history`) and briefly in process listings (`/proc/<pid>/cmdline`). Prompt interactively and feed sops via stdin instead:
+
+  ```bash
+  read -rs secret
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' EXIT
+  printf '%s' "$secret" | sops --input-type raw --output-type raw --encrypt /dev/stdin > "$tmp"
+  mv "$tmp" secrets/foo.sops
+  ```
+
+  `sops --encrypt /dev/stdin` works because `.sops.yaml` has a `/dev/stdin` rule (section 4). Never redirect `>` straight to the target file — the shell truncates it before sops runs, so a failed encryption would wipe your existing secret; write to a temp file and `mv` into place instead. (`printf` is a bash builtin, so the value stays inside the running shell and never becomes a new process's argv.) If a repo provides a helper for a specific secret (e.g. `scripts/proxmox/vm/db/set-db-password.sh`), use it — it applies the same stdin-only rule.
 - **Key recovery** — if `~/.config/sops/age/keys.txt` is lost, encrypted files cannot be recovered. Back it up securely (e.g. to a password manager or offline storage).
 - **Multiple keys** — you can add multiple age public keys to the `creation_rules` so multiple people (or CI) can decrypt.
 
