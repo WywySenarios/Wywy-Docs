@@ -23,6 +23,10 @@ class ParsedFile(TypedDict):
     section: str | None
 
 
+# A frontmatter block splits into at most three parts: "", YAML, body.
+_FRONTMATTER_PARTS = 3
+
+
 def scan_files(root_dirs: list[str]) -> list[str]:
     """Scan *root_dirs* recursively for ``.mdx`` files.
 
@@ -31,9 +35,9 @@ def scan_files(root_dirs: list[str]) -> list[str]:
     files: list[str] = []
     for root_dir in root_dirs:
         for root, _dirs, filenames in os.walk(root_dir, followlinks=True):
-            for fn in filenames:
-                if fn.endswith(".mdx"):
-                    files.append(str(Path(root) / fn))
+            files.extend(
+                str(Path(root) / fn) for fn in filenames if fn.endswith(".mdx")
+            )
     return sorted(files)
 
 
@@ -53,11 +57,11 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
     dict
         A dictionary with keys:
 
-        - **title**       – from YAML frontmatter or filename stem fallback.
-        - **path**        – *filepath* relative to *root*.
-        - **content**     – body text after the frontmatter block.
-        - **frontmatter** – parsed YAML dict (always a dict, never ``None``).
-        - **section**     – ``"docs"`` if path starts with ``docs/``,
+        - **title**       - from YAML frontmatter or filename stem fallback.
+        - **path**        - *filepath* relative to *root*.
+        - **content**     - body text after the frontmatter block.
+        - **frontmatter** - parsed YAML dict (always a dict, never ``None``).
+        - **section**     - ``"docs"`` if path starts with ``docs/``,
                             ``"internal"`` if path starts with ``internal/``,
                             ``None`` otherwise.
 
@@ -71,7 +75,7 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
 
     if raw.startswith("---"):
         parts = raw.split("---", 2)
-        if len(parts) >= 3:
+        if len(parts) >= _FRONTMATTER_PARTS:
             fm_text = parts[1]
             content = parts[2].lstrip("\n")
             if fm_text.strip():

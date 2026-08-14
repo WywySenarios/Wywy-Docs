@@ -158,7 +158,8 @@ def search_docs(query: str, max_results: int = 10) -> str:
     """Full-text search across documentation.
 
     Args:
-        query: Literal text to search for. Hyphens and punctuation are treated literally.
+        query: Literal text to search for. Hyphens and punctuation are
+            treated literally.
         max_results: Maximum number of results (default 10).
 
     """
