@@ -6,19 +6,13 @@
 # Run tests:
 #   docker run --rm --network none wywy-docs:test
 #
-# Run with Wywy-Website-Control docs (needed for repo-structure tests):
-#   docker run --rm --network none       \
-#     -v /etc/Wywy-Website-Control/docs/:/etc/Wywy-Website-Control/docs/:ro \
-#     -v /etc/Wywy-Website-Control/internal/:/etc/Wywy-Website-Control/internal/:ro \
-#     wywy-docs:test
-#
 # To keep the container around for debugging:
 #   docker run --rm -it --entrypoint bash wywy-docs:test
 
 FROM python:3.12-slim-bookworm
 
 # ── System dependencies ─────────────────────────────────────────────
-# Node.js + npm for bats (shell test framework). Git for repo-structure tests.
+# Node.js + npm for bats (shell test framework).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         nodejs \

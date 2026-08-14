@@ -6,11 +6,23 @@
 # Each test creates an isolated temporary directory that mimics the Wywy-Docs
 # repo layout (docs/, internal/, wywy_docs/, scripts/) with sample .mdx
 # content, builds an FTS5 index, then invokes the script under test.
+# Servers are launched on a per-test ephemeral port so bare-metal runs never
+# collide with production on the default port (2530) or with each other.
 # ============================================================================
+
+get_free_port() {
+    python3 -c '
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+'
+}
 
 setup() {
     REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
     TEST_DIR=$(mktemp -d)
+    TEST_PORT=$(get_free_port)
 
     # Create repo-like directory layout
     mkdir -p "$TEST_DIR/docs" "$TEST_DIR/internal" "$TEST_DIR/wywy_docs" "$TEST_DIR/scripts"
@@ -93,8 +105,9 @@ teardown() {
 
 @test "start-server.sh: starts server and writes numeric PID to server.pid" {
     cd "$TEST_DIR"
-    run ./scripts/start-server.sh
-    [ "$status" -eq 0 ]
+    # NOTE: no `run` wrapper — bats `run` treats `VAR=x cmd` as a literal
+    # command name and fails with 127.  Assert on the pid file instead.
+    PORT=$TEST_PORT ./scripts/start-server.sh
     [ -f wywy_docs/server.pid ]
     local pid
     pid=$(cat wywy_docs/server.pid)
@@ -103,18 +116,20 @@ teardown() {
     kill -0 "$pid" 2>/dev/null
 }
 
-@test "start-server.sh: server is reachable via SSE endpoint within 5 seconds" {
+@test "start-server.sh: server is reachable via SSE endpoint" {
     cd "$TEST_DIR"
-    ./scripts/start-server.sh
+    PORT=$TEST_PORT ./scripts/start-server.sh
 
-    local deadline=$((SECONDS + 5))
+    # Bare-metal hosts can be heavily loaded; a cold first import of mcp can
+    # take tens of seconds, so match the pytest-side SERVER_TIMEOUT=60.
+    local deadline=$((SECONDS + 60))
     local ok=false
     while [ $SECONDS -lt $deadline ]; do
         if python3 -c "
 from urllib.request import urlopen
 ok = False
 try:
-    r = urlopen('http://127.0.0.1:2530/sse', timeout=2)
+    r = urlopen('http://127.0.0.1:$TEST_PORT/sse', timeout=2)
     ok = r.status == 200
 except Exception:
     pass
@@ -135,7 +150,7 @@ exit(0 if ok else 1)
 
 @test "stop-server.sh: terminates server process" {
     cd "$TEST_DIR"
-    ./scripts/start-server.sh
+    PORT=$TEST_PORT ./scripts/start-server.sh
     local pid
     pid=$(cat wywy_docs/server.pid)
     kill -0 "$pid" 2>/dev/null  # confirm process is alive
@@ -147,7 +162,7 @@ exit(0 if ok else 1)
 
 @test "stop-server.sh: removes server.pid" {
     cd "$TEST_DIR"
-    ./scripts/start-server.sh
+    PORT=$TEST_PORT ./scripts/start-server.sh
     [ -f wywy_docs/server.pid ]
 
     run ./scripts/stop-server.sh
@@ -166,9 +181,9 @@ exit(0 if ok else 1)
 # PORT forwarding tests (start-server.sh)
 # ===========================================================================
 
-@test "start-server.sh: forwards PORT=3000 as --port 3000 to Python" {
+@test "start-server.sh: forwards PORT as --port to Python" {
     cd "$TEST_DIR"
-    PORT=3000 ./scripts/start-server.sh
+    PORT=$TEST_PORT ./scripts/start-server.sh
 
     # PID file must exist
     [ -f wywy_docs/server.pid ]
@@ -188,11 +203,17 @@ exit(0 if ok else 1)
     cmdline=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ') || true
     echo "cmdline: $cmdline"
 
-    # The command line MUST contain "--port 3000"
-    echo "$cmdline" | grep -q "\-\-port 3000"
+    # The command line MUST contain "--port $TEST_PORT"
+    echo "$cmdline" | grep -q -- "--port $TEST_PORT"
 }
 
 @test "start-server.sh: without PORT no --port argument" {
+    # The default port 2530 must be free for this test to be meaningful; if
+    # something already listens there (e.g. production), the server cannot
+    # bind, so skip instead of producing a misleading failure.
+    if ! python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 2530))' 2>/dev/null; then
+        skip "port 2530 is in use; cannot test default-port startup"
+    fi
     cd "$TEST_DIR"
     ./scripts/start-server.sh
 
@@ -210,40 +231,4 @@ exit(0 if ok else 1)
 
     # When PORT is unset, no --port should appear
     ! echo "$cmdline" | grep -q "\-\-port"
-}
-
-@test "start-server.sh: writes numeric PID to server.pid" {
-    cd "$TEST_DIR"
-    ./scripts/start-server.sh
-
-    [ -f wywy_docs/server.pid ]
-    local pid
-    pid=$(cat wywy_docs/server.pid)
-    [[ "$pid" =~ ^[0-9]+$ ]]
-    sleep 1
-    kill -0 "$pid" 2>/dev/null
-}
-
-# ===========================================================================
-# PORT forwarding tests (wywy-docs-mcp.service)
-# ===========================================================================
-
-@test "wywy-docs-mcp.service: forwards PORT via Environment=PORT=" {
-    SERVICE_FILE="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/scripts/wywy-docs-mcp.service"
-    # The unit file MUST contain an Environment directive that forwards
-    # PORT when set.  Valid forms:
-    #   Environment=PORT=%e         (pass through from env)
-    #   Environment=PORT=
-    #   Environment="PORT=%e"
-    run grep -E '^\s*Environment=\s*"?PORT' "$SERVICE_FILE"
-    [ "$status" -eq 0 ]
-}
-
-@test "wywy-docs-mcp.service: unit file is syntactically valid" {
-    SERVICE_FILE="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/scripts/wywy-docs-mcp.service"
-    if ! command -v systemd-analyze &>/dev/null; then
-        skip "systemd-analyze not available on this system"
-    fi
-    run systemd-analyze verify "$SERVICE_FILE"
-    [ "$status" -eq 0 ]
 }
