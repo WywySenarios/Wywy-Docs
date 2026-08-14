@@ -1,7 +1,7 @@
 ---
 title: SOPS + age Setup
-published: '2026-07-23T02:48:37+00:00'
-last_updated: '2026-08-10T02:42:17'
+published: "2026-07-23T02:48:37+00:00"
+last_updated: "2026-08-10T02:42:17"
 ---
 
 This guide walks through setting up [SOPS](https://github.com/getsops/sops) with the [age](https://age-encryption.org/) encryption backend to store secrets safely in this repository. Once configured, encrypted secrets can be committed to git and decrypted by ArgoCD via a Config Management Plugin during sync.
@@ -108,6 +108,7 @@ sops --decrypt secrets/admin.txt.sops > secrets/admin.txt
   ```
 
   `sops --encrypt /dev/stdin` works because `.sops.yaml` has a `/dev/stdin` rule (section 4). Never redirect `>` straight to the target file — the shell truncates it before sops runs, so a failed encryption would wipe your existing secret; write to a temp file and `mv` into place instead. (`printf` is a bash builtin, so the value stays inside the running shell and never becomes a new process's argv.) If a repo provides a helper for a specific secret (e.g. `scripts/proxmox/vm/db/set-db-password.sh`), use it — it applies the same stdin-only rule.
+
 - **Key recovery** — if `~/.config/sops/age/keys.txt` is lost, encrypted files cannot be recovered. Back it up securely (e.g. to a password manager or offline storage).
 - **Multiple keys** — you can add multiple age public keys to the `creation_rules` so multiple people (or CI) can decrypt.
 

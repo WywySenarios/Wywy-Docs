@@ -10,6 +10,7 @@ C11 HTTP API (port 2523) serving database requests via pthreads, libpq, libcyaml
 ## Dockerfile
 
 `apps/sql-receptionist/Dockerfile` — multi-stage:
+
 - `fetcher`: downloads jansson + libcyaml source
 - `builder`: compiles libraries, installs deps
 - `dev` (from builder): valgrind + gdb + nano, source copied

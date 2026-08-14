@@ -98,6 +98,7 @@ with psycopg.connect(conninfo) as data_conn:
 ## Models
 
 Django models are currently stubs (empty `models.py` files). When models are introduced:
+
 - Use `UUIDField` for primary keys.
 - Include `created_at` and `updated_at` on every model.
 - Use `class Meta` with `ordering` and `verbose_name`.

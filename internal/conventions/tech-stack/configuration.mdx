@@ -1,7 +1,7 @@
 ---
 title: Configuration Conventions
-published: '2026-06-05T00:00:00'
-last_updated: '2026-08-09T14:34:29'
+published: "2026-06-05T00:00:00"
+last_updated: "2026-08-09T14:34:29"
 ---
 
 > **Cross-cutting** — applies to all services regardless of language.
@@ -54,6 +54,7 @@ service .env.dev > service .env > universal .env.dev > universal .env
 **Never use a specific machine hostname as a default value** in `.env` files, `.env.example` templates, or any configuration template committed to the repo. Use `localhost` or an empty value (`HOST=`) as the placeholder instead.
 
 ✅ **Do this:**
+
 ```bash
 # config/.env.example
 AGENTIC_API_HOST=localhost
@@ -62,6 +63,7 @@ PBS_HOST=
 ```
 
 ❌ **Don't do this:**
+
 ```bash
 # config/.env.example
 AGENTIC_API_HOST=my-dev-machine
@@ -85,6 +87,7 @@ Committed template files (cloud-init snippets, `config/db/*`, `*.template`) mark
 - Leftover-placeholder guards scan **non-comment lines** for `{{` and fail the render if any survive.
 
 ✅ **Do this:**
+
 ```apache
 # Calico masquerades pod -> LAN traffic to the node IP, so postgres sees
 # the worker IP, never the pod CIDR (<K8S_WORKER_IPS>).
@@ -92,6 +95,7 @@ Committed template files (cloud-init snippets, `config/db/*`, `*.template`) mark
 ```
 
 ❌ **Don't do this** — angle-bracket tokens get confused with comment references, and `{{NAME}}` inside a comment gets expanded by a non-comment-aware renderer (or trips the leftover guard):
+
 ```apache
 # <K8S_WORKER_IPS> is expanded below
 <K8S_WORKER_IPS>

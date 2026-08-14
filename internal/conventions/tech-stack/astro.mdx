@@ -107,10 +107,10 @@ src/components/
 
 React components embedded in Astro pages use client directives for hydration:
 
-| Directive            | Use case                                             |
-| -------------------- | ---------------------------------------------------- |
-| `client:only="react"`| Browser-only APIs (auth, geolocation, form state)    |
-| `client:load`        | Components needing immediate hydration (nav, toast)  |
+| Directive             | Use case                                            |
+| --------------------- | --------------------------------------------------- |
+| `client:only="react"` | Browser-only APIs (auth, geolocation, form state)   |
+| `client:load`         | Components needing immediate hydration (nav, toast) |
 
 ```astro
 <NavDrawer client:load />
@@ -132,6 +132,7 @@ Layout.astro            # Root shell (nav, toasts, auth, pipeline provider)
 Pages pass `css_color_palette` prop to control theme (`"dark_mode"`, `"light_mode"`, `"sunset"`).
 
 Layout defines named `<slot>` regions:
+
 - `<slot name="head">` — page-specific `<head>` content.
 - `<slot name="top-bar-button2">` / `<slot name="top-bar-button3">` — extra nav buttons.
 - `<slot />` — page content.
@@ -140,30 +141,31 @@ Layout defines named `<slot>` regions:
 
 Defined in `src/content.config.ts`:
 
-| Collection  | Loader    | Source directory         |
-| ----------- | --------- | ------------------------ |
-| `docs`      | glob MDX  | `src/content/docs/`      |
-| `projects`  | glob MD   | `src/data/projects/`     |
-| `directives`| glob MD   | `src/data/directives/`   |
-| `schedules` | glob MD   | `src/data/schedules/`    |
-| `wishlist`  | glob MD   | `src/data/wishlist/`     |
-| `datasets`  | glob JSON | `src/data/datasets/`     |
+| Collection   | Loader    | Source directory       |
+| ------------ | --------- | ---------------------- |
+| `docs`       | glob MDX  | `src/content/docs/`    |
+| `projects`   | glob MD   | `src/data/projects/`   |
+| `directives` | glob MD   | `src/data/directives/` |
+| `schedules`  | glob MD   | `src/data/schedules/`  |
+| `wishlist`   | glob MD   | `src/data/wishlist/`   |
+| `datasets`   | glob JSON | `src/data/datasets/`   |
 
 ## Path aliases
 
 Defined in `tsconfig.json` and `astro.config.mjs`:
 
-| Alias               | Resolves to                    | Purpose                     |
-| ------------------- | ------------------------------ | --------------------------- |
-| `@/`                | `./src/`                       | Internal imports            |
-| `@root/`            | `./*`                          | Astro app root              |
-| `@pipeline/`        | `../pipeline/src/`             | Cross-app shared module     |
-| `@wywy/http/`       | `../http/src/`                 | Cross-app shared module     |
-| `@universal_root/`  | `../../*`                      | Monorepo root               |
+| Alias              | Resolves to        | Purpose                 |
+| ------------------ | ------------------ | ----------------------- |
+| `@/`               | `./src/`           | Internal imports        |
+| `@root/`           | `./*`              | Astro app root          |
+| `@pipeline/`       | `../pipeline/src/` | Cross-app shared module |
+| `@wywy/http/`      | `../http/src/`     | Cross-app shared module |
+| `@universal_root/` | `../../*`          | Monorepo root           |
 
 ## Integrations
 
 Configured in `astro.config.mjs`:
+
 - `@astrojs/cloudflare` — Cloudflare Pages deployment.
 - `@astrojs/mdx` — MDX content rendering.
 - `@astrojs/react` — React component support.

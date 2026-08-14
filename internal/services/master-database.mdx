@@ -6,6 +6,7 @@ published: 2026-05-22T00:00:00
 ## Docker containers
 
 See [`containers/`](./master-database/containers/) for per-container docs:
+
 - [`sql-receptionist`](./master-database/containers/sql-receptionist.mdx) — C11 HTTP API
 - [`create_tables`](./master-database/containers/create_tables.mdx) — schema migration
 - [`postgres`](./master-database/containers/postgres.mdx) — PG18 + WAL backup
@@ -15,17 +16,18 @@ See [`containers/`](./master-database/containers/) for per-container docs:
 
 ### Container aliases (enter.sh / run.sh)
 
-| Alias | Actual service | Source code path |
-|---|---|---|
-| `sqlr` | `sql_receptionist` | `apps/sql-receptionist/` |
-| `pgres`, `psql`, `database` | `postgres` | `apps/postgres/` |
-| `unittest` | `unit_test` | `apps/unit_tests/` + `apps/sql-receptionist/` |
+| Alias                       | Actual service     | Source code path                              |
+| --------------------------- | ------------------ | --------------------------------------------- |
+| `sqlr`                      | `sql_receptionist` | `apps/sql-receptionist/`                      |
+| `pgres`, `psql`, `database` | `postgres`         | `apps/postgres/`                              |
+| `unittest`                  | `unit_test`        | `apps/unit_tests/` + `apps/sql-receptionist/` |
 
 Traceback container paths → source: `/home/sql-receptionist/` → `apps/sql-receptionist/`, `/home/create_tables/` → `apps/create_tables/`, `/home/postgres/` → `apps/postgres/`, `/backup.sh` → `apps/postgres/backup.sh`, `/entrypoint.sh` → `apps/cloudflared/entrypoint.sh`.
 
 ## External dependencies
 
 All paths controlled by `/etc/Wywy-Website-Control/`:
+
 - `config/.env` / `.env.dev` — universal env vars (`MAIN_URL`, `CACHE_URL`, etc.)
 - `config/master-database/.env` / `.env.dev` — service env vars (DB password, logging flags, `USER_ID=25231`)
 - `config/config.yml` — prod table schemas
@@ -46,6 +48,7 @@ All paths controlled by `/etc/Wywy-Website-Control/`:
 ## Datatype validation
 
 All in `apps/sql-receptionist/src/postgres/schema.c:169` (`validate_column`):
+
 - `int`/`integer` → `json_is_integer`
 - `float`/`number` → `json_is_real`
 - `string`/`str`/`text` → `json_is_string`
@@ -67,6 +70,7 @@ Toggle schema failure logging: `SQL_RECEPTIONIST_LOG_SCHEMA_FAILURES=TRUE`.
 ## Submodules
 
 3 submodules (external repos). Run `git submodule update --init --recursive` after clone.
+
 - `apps/create_tables` — also a submodule itself
 - `apps/tests/generic_database_api` — generic test framework (Python unittest-based)
 - `apps/tests/wywy_website_types` — shared Python type aliases and datatype maps

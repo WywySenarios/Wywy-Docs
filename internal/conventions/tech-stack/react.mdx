@@ -27,13 +27,14 @@ shadcn/ui components live in `src/components/ui/` and are styled via the `cn()` 
 ### Styling per project
 
 | Repo / service | shadcn/ui style |
-|----------------|-----------------|
+| -------------- | --------------- |
 | Website        | `new-york`      |
 
 ### Installation — IMPORTANT
 
 ShadCN components MUST be added using `npx shadcn@latest add <component-name>` from the project root.  
 **Never** copy component source from:
+
 - `shadcn/ui` documentation examples
 - Your training memory / knowledge base
 - The internet (blog posts, GitHub gists, etc.)
@@ -55,8 +56,8 @@ When a parent component is already hydrated (has `client:load` or `client:only="
 ```tsx
 // GOOD: shadcn as child of a hydrated component
 <DashboardCard client:load>
-    <Button>Save</Button>
-    <Dialog>...</Dialog>
+  <Button>Save</Button>
+  <Dialog>...</Dialog>
 </DashboardCard>
 ```
 

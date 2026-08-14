@@ -1,0 +1,14 @@
+# Prettier ignore — keep the formatter away from generated/vendored
+# content and anything that would write outside this checkout.
+.git/
+.venv/
+.pytest_cache/
+.ruff_cache/
+wywy_docs/
+*.egg-info/
+
+# Symlink into Wywy-Website-Control; never reformat through it.
+opencode.jsonc
+
+# Prettier cannot infer a parser for these.
+*.toml

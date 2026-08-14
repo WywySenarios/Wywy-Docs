@@ -29,6 +29,7 @@ structured implementation plan.
 ### Context
 
 Injected by the orchestrator at container start. Must include:
+
 - Previous stage summary (from `context/summary.md`)
 - User input (if pipeline was blocked)
 - The current plan (`artifacts/plan.md`)
@@ -111,6 +112,7 @@ The 5-section body follows the frontmatter.
 ## Forbidden instructions
 
 Agents MUST NOT be instructed to:
+
 - Run `sudo` or `rm -rf`.
 - Make network calls to external services (production endpoints, third-party APIs).
 - Write files outside `/workspace/`, `/artifacts/`, `/state/`, `/logs/`, and `/context/`.
