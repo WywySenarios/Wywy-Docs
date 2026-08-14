@@ -30,6 +30,7 @@ from tests.test_server import (
     setup_temp_wywy_root,
     verify_metadata,
 )
+from wywy_docs.indexer import build_index
 
 HOST = "127.0.0.1"
 
@@ -315,7 +316,9 @@ class TestWriteDocTool(unittest.TestCase):
         """
         link_name = f"escape_{self._testMethodName}"
         link_path = Path(self.root_dir) / "docs" / link_name
-        link_path.symlink_to("/tmp")
+        # Symlink to a sibling of ``docs/`` inside the temp root; resolving
+        # through it escapes the section directory, which must be rejected.
+        link_path.symlink_to(self.root_dir)
         try:
             resp = self._call("docs", f"{link_name}/evil_file", "body")
             assert "error" in resp
@@ -415,9 +418,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
             "---\ntitle: Initial\n---\nInitial body.",
         )
         db_path = Path(self.root_dir) / "wywy_docs" / "docs_index.db"
-        from wywy_docs.indexer import build_index as _bi
-
-        _bi(
+        build_index(
             root_dirs=[
                 str(Path(self.root_dir) / "docs"),
                 str(Path(self.root_dir) / "internal"),

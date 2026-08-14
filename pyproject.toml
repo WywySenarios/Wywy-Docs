@@ -29,7 +29,10 @@ select = ["ALL"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+# Tests deliberately keep some imports inside functions (importability
+# checks, avoiding import-time MCP wiring) and reach into private members
+# (module globals shared with tests).
+"tests/**" = ["S101", "PLC0415", "SLF001"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

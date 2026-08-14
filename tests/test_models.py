@@ -11,6 +11,7 @@ Verifies:
 from __future__ import annotations
 
 import unittest
+from typing import get_args
 
 import pydantic
 import pytest
@@ -61,7 +62,5 @@ class TestSectionType(unittest.TestCase):
 
     def test_section_values(self) -> None:
         """``Section`` accepts only ``"docs"`` and ``"internal"``."""
-        from typing import get_args
-
         args = get_args(Section)
         assert set(args) == {"docs", "internal"}

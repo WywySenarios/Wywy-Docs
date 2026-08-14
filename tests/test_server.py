@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import queue
+import select
 import shutil
 import socket
 import sqlite3
@@ -32,6 +33,8 @@ from urllib.request import urlopen
 
 import pytest
 from mcp.types import INVALID_PARAMS
+
+from wywy_docs.indexer import build_index
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -167,8 +170,6 @@ def build_test_index(root: str, files: dict[str, str]) -> str:
     """
     for rel_path, content in files.items():
         create_file(root, rel_path, content)
-
-    from wywy_docs.indexer import build_index
 
     db_path = Path(root) / "wywy_docs" / "docs_index.db"
     build_index(
@@ -428,14 +429,23 @@ class ServerProcess:
         env = os.environ.copy()
         env["PORT"] = str(self.port)
         env["WYWY_ROOT"] = self.root_dir
-        self.process = subprocess.Popen(  # noqa: S603 - static command, no user input
-            [
+        # Prefer the project venv python (fast, no uv sync).  Fall back to
+        # `uv run --offline` for environments without a local venv; the
+        # offline flag matches run-tests.sh and avoids network sync hangs.
+        venv_python = str(Path(_PROJECT_ROOT) / ".venv" / "bin" / "python")
+        if Path(venv_python).is_file():
+            command: list[str] = [venv_python, "-m", "wywy_docs.server"]
+        else:
+            command = [
                 shutil.which("uv") or "uv",
                 "run",
+                "--offline",
                 "python",
                 "-m",
                 "wywy_docs.server",
-            ],
+            ]
+        self.process = subprocess.Popen(  # noqa: S603 - static command, no user input
+            command,
             cwd=_PROJECT_ROOT,
             env=env,
             stdout=subprocess.PIPE,
@@ -475,15 +485,22 @@ class ServerProcess:
         raise RuntimeError(msg)
 
     def read_stderr(self) -> str:
-        """Read any captured stderr output from the process."""
-        if self.process and self.process.stderr:
-            try:
-                return self.process.stderr.read().decode("utf-8", errors="replace")[
-                    :2000
-                ]
-            except OSError:
-                return "<unreadable>"
-        return "<no stderr>"
+        """Read any captured stderr output from the process, without blocking.
+
+        The server process may still be alive with the stderr pipe open;
+        a plain ``read()`` would block forever.  ``select`` bounds the wait
+        so an unresponsive server yields a message instead of a hang.
+        """
+        if self.process is None or self.process.stderr is None:
+            return "<no stderr>"
+        try:
+            readable, _, _ = select.select([self.process.stderr], [], [], 1.0)
+            if not readable:
+                return "<stderr not yet available>"
+            data = self.process.stderr.read()
+        except OSError:
+            return "<unreadable>"
+        return data.decode("utf-8", errors="replace")[:2000]
 
     def stop(self) -> None:
         """Terminate the server process."""
