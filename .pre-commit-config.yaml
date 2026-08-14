@@ -42,8 +42,15 @@ repos:
       - id: prettier
         name: prettier (whole tree)
         # Prettier expands these globs itself; .prettierignore protects
-        # .venv/, wywy_docs/, and the opencode.jsonc symlink.
-        entry: npx --yes prettier@3.5.3 --check **/*.mdx **/*.md **/*.yaml **/*.yml **/*.json
+        # .venv/, wywy_docs/, and the opencode.jsonc symlink.  Quoting is
+        # required: an unquoted `*` at token start is a YAML alias.
+        entry: npx --yes prettier@3.5.3 --check
+        args:
+          - "**/*.mdx"
+          - "**/*.md"
+          - "**/*.yaml"
+          - "**/*.yml"
+          - "**/*.json"
         language: system
         pass_filenames: false
         stages: [pre-push]
