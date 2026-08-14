@@ -150,6 +150,85 @@ def _resolve_section_path(section: str, path: str) -> str:
     return abs_path
 
 
+# ── write_doc helpers ─────────────────────────────────────────────────
+
+
+def _read_existing_frontmatter(abs_path: str) -> dict[str, object]:
+    """Return the frontmatter of *abs_path*, or ``{}`` if missing/unreadable."""
+    if not Path(abs_path).is_file():
+        return {}
+    try:
+        parsed = parse_file(abs_path, root=_ROOT_DIR)
+    except OSError:
+        logger.debug(
+            "Failed to read existing frontmatter for %s",
+            abs_path,
+            exc_info=True,
+        )
+        return {}
+    return parsed["frontmatter"]
+
+
+def _resolve_published(existing_fm: dict[str, object]) -> str:
+    """Return the ``published`` value, keeping *existing_fm* or defaulting to now."""
+    pub_val = existing_fm.get("published")
+    if pub_val is None:
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+    if isinstance(pub_val, str):
+        return pub_val
+    if isinstance(pub_val, (date, datetime)):
+        return pub_val.isoformat()
+    return str(pub_val)
+
+
+def _atomic_write(abs_path: str, full_content: str) -> None:
+    """Write *full_content* to *abs_path* via a temp file in the same dir."""
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=Path(abs_path).parent)
+        with os.fdopen(fd, "w") as f:
+            f.write(full_content)
+        Path(tmp_path).rename(abs_path)
+    except OSError as e:
+        raise RuntimeError(str(e)) from e
+
+
+def _delete_metadata_after_failed_index(db_path: str, rel_path: str) -> None:
+    """Best-effort removal of the *rel_path* ``file_metadata`` entry."""
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "DELETE FROM file_metadata WHERE path = ?",
+            (rel_path,),
+        )
+        conn.commit()
+        conn.close()
+    except sqlite3.Error:
+        logger.debug(
+            "Failed to clean up file_metadata after failed re-index",
+            exc_info=True,
+        )
+
+
+def _reindex_after_write(section: str, path: str) -> None:
+    """Rebuild the FTS5 index; on failure clean up metadata and re-raise.
+
+    Raises:
+        RuntimeError: If the re-index fails (the file is already written).
+
+    """
+    db_path = _db_path()
+    docs_dir, internal_dir = _section_dirs(_ROOT_DIR)
+    try:
+        build_index(root_dirs=[docs_dir, internal_dir], db_path=db_path)
+    except Exception as e:
+        # Any re-index failure must still clean up and report; `from e`
+        # keeps the original error visible.
+        logger.exception("Index update failed after write")
+        _delete_metadata_after_failed_index(db_path, f"{section}/{path}")
+        msg = f"file written but index update failed: {e}"
+        raise RuntimeError(msg) from e
+
+
 # ── Tool implementations ──────────────────────────────────────────────
 
 
@@ -256,48 +335,19 @@ def write_doc(
     except ValueError as e:
         raise ValueError(str(e)) from e
 
-    # ── Read existing file for merge ────────────────────────────────
-    existing_fm: dict[str, object] = {}
-    if Path(abs_path).is_file():
-        try:
-            parsed = parse_file(abs_path, root=_ROOT_DIR)
-            existing_fm = parsed["frontmatter"]
-        except OSError:
-            logger.debug(
-                "Failed to read existing frontmatter for %s",
-                abs_path,
-                exc_info=True,
-            )
-
-    # Filter out reserved fields from existing frontmatter
+    # Merge: existing (minus reserved) → user fields → published/last_updated
+    existing_fm = _read_existing_frontmatter(abs_path)
     existing_filtered = {
         k: v for k, v in existing_fm.items() if k not in ("published", "last_updated")
     }
-
-    # Determine published value
-    if "published" in existing_fm and existing_fm["published"] is not None:
-        pub_val = existing_fm["published"]
-        if isinstance(pub_val, str):
-            published = pub_val
-        elif isinstance(pub_val, (date, datetime)):
-            published = pub_val.isoformat()
-        else:
-            published = str(pub_val)
-    else:
-        published = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
-
-    # last_updated is always current
-    last_updated = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
-
-    # Merge: existing (minus reserved) → user fields → published/last_updated
     merged_fm = {
         **existing_filtered,
         **frontmatter,
-        "published": published,
-        "last_updated": last_updated,
+        "published": _resolve_published(existing_fm),
+        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
     }
 
-    # Serialize frontmatter
+    # Serialize frontmatter and write atomically, then re-index
     fm_yaml = yaml.safe_dump(
         merged_fm,
         default_flow_style=False,
@@ -305,41 +355,8 @@ def write_doc(
         sort_keys=False,
     )
     full_content = f"---\n{fm_yaml}---\n\n{content}"
-
-    # Atomic write: tempfile in same directory + os.rename
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=Path(abs_path).parent)
-        with os.fdopen(fd, "w") as f:
-            f.write(full_content)
-        Path(tmp_path).rename(abs_path)
-    except OSError as e:
-        raise RuntimeError(str(e)) from e
-
-    # ── Re-index ────────────────────────────────────────────────────
-    db_path = _db_path()
-    docs_dir, internal_dir = _section_dirs(_ROOT_DIR)
-    try:
-        build_index(root_dirs=[docs_dir, internal_dir], db_path=db_path)
-    except Exception as e:
-        # Any re-index failure must still clean up and report; `from e`
-        # keeps the original error visible.
-        logger.exception("Index update failed after write")
-        # Clean up file_metadata entry for the just-written path (best-effort)
-        try:
-            conn = sqlite3.connect(db_path)
-            conn.execute(
-                "DELETE FROM file_metadata WHERE path = ?",
-                (f"{section}/{path}",),
-            )
-            conn.commit()
-            conn.close()
-        except sqlite3.Error:
-            logger.debug(
-                "Failed to clean up file_metadata after failed re-index",
-                exc_info=True,
-            )
-        msg = f"file written but index update failed: {e}"
-        raise RuntimeError(msg) from e
+    _atomic_write(abs_path, full_content)
+    _reindex_after_write(section, path)
 
     return json.dumps({"path": f"{section}/{path}"})
 
@@ -441,8 +458,10 @@ async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
     )
 
 
-# Replace the default CallToolRequest handler with our custom one.
-mcp._mcp_server.request_handlers[CallToolRequest] = _call_tool_handler  # type: ignore[reportPrivateUsage]
+# Replace the default CallToolRequest handler with our custom one. FastMCP
+# exposes no public API for this; `_mcp_server` access is the documented
+# workaround, so the private-access lint is suppressed.
+mcp._mcp_server.request_handlers[CallToolRequest] = _call_tool_handler  # noqa: SLF001  # type: ignore[reportPrivateUsage]
 
 
 # ── Entry point ───────────────────────────────────────────────────────
@@ -457,7 +476,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int)
     args, _ = parser.parse_known_args()
-    global _ROOT_DIR
+    # `_ROOT_DIR` is a module-level mutable shared with tests; the `global`
+    # statement is the deliberate mechanism to set it from `main()`.
+    global _ROOT_DIR  # noqa: PLW0603
     _ROOT_DIR = os.environ.get(  # type: ignore[reportConstantRedefinition]
         "WYWY_DOCS_DIR",
         os.environ.get("WYWY_ROOT", str(Path.cwd())),
