@@ -3,67 +3,64 @@
 # Per-commit hooks run on staged (diff) files only:
 #   - prettier (via npx) on docs/config
 #   - ruff check / ruff format on Python
-#   - pyright on Python
+#   - mypy on Python
 #
-# Pre-push hooks run the same tools across the ENTIRE tree:
+# Pre-push hooks run the same checks across the entire tree:
 #   pre-commit install --hook-type pre-push
 #
-# Ruff config lives in pyproject.toml under [tool.ruff]; prettier uses
-# .prettierignore; pyright config lives in pyproject.toml under [tool.pyright].
+# Tool config lives in pyproject.toml ([tool.ruff], [tool.mypy]) and
+# .prettierignore. All hooks are defined here; no external scripts.
 
 default_stages: [pre-commit]
 
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.21
-    hooks:
-      - id: ruff
-        name: ruff check (staged files)
-        args: [--fix, --exit-non-zero-on-fix]
-      - id: ruff-format
-        name: ruff format (staged files)
-      - id: ruff
-        name: ruff check (whole tree)
-        pass_filenames: false
-        stages: [pre-push]
-      - id: ruff-format
-        name: ruff format (whole tree)
-        entry: ruff format --check
-        pass_filenames: false
-        stages: [pre-push]
-
   - repo: local
     hooks:
+      # --- staged (pre-commit) ---
+      - id: ruff-check
+        name: ruff check (staged)
+        entry: uv run ruff check
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format (staged)
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
       - id: prettier
-        name: prettier (staged files)
-        entry: npx --yes prettier@3.5.3 --write
+        name: prettier (staged)
+        entry: npx --yes prettier@3.5.3 --check
         language: system
         types_or: [mdx, markdown, yaml, json]
-      - id: prettier
-        name: prettier (whole tree)
-        # Prettier expands these globs itself; .prettierignore protects
-        # .venv/, wywy_docs/, and the opencode.jsonc symlink.  Quoting is
-        # required: an unquoted `*` at token start is a YAML alias.
-        entry: npx --yes prettier@3.5.3 --check
-        args:
-          - "**/*.mdx"
-          - "**/*.md"
-          - "**/*.yaml"
-          - "**/*.yml"
-          - "**/*.json"
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-      - id: pyright
-        name: pyright (staged files)
-        entry: .venv/bin/pyright
+      - id: mypy
+        name: mypy (staged)
+        entry: uv run mypy --follow-imports=silent
         language: system
         types: [python]
         require_serial: true
-      - id: pyright
-        name: pyright (whole tree)
-        entry: .venv/bin/pyright
+
+      # --- full tree (pre-push) ---
+      - id: ruff-check-full
+        name: ruff check (full tree)
+        entry: uv run ruff check
         language: system
         pass_filenames: false
         stages: [pre-push]
-        require_serial: true
+      - id: ruff-format-full
+        name: ruff format (full tree)
+        entry: uv run ruff format --check
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: prettier-full
+        name: prettier (full tree)
+        entry: npx --yes prettier@3.5.3 --check "docs/**/*.mdx" "internal/**/*.mdx" "**/*.md" "**/*.yaml" "**/*.yml" "**/*.json"
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+      - id: mypy-full
+        name: mypy (full tree)
+        entry: uv run mypy src tests
+        language: system
+        pass_filenames: false
+        stages: [pre-push]

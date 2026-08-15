@@ -2,6 +2,7 @@
 # content and anything that would write outside this checkout.
 .git/
 .venv/
+.mypy_cache/
 .pytest_cache/
 .ruff_cache/
 wywy_docs/
