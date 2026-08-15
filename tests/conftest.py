@@ -12,10 +12,6 @@ real index databases, or real listening ports:
   root-dependent paths against the repo's real ``wywy_docs/`` directory.
 """
 
-# pyright: reportUnusedFunction=false
-# Pyright does not know pytest discovers fixtures; every fixture here is
-# consumed by the test suite.
-
 from __future__ import annotations
 
 import os
@@ -59,9 +55,9 @@ def _isolated_server_root() -> Generator[str, None, None]:
     """
     import wywy_docs.server as server_mod
 
-    previous = server_mod._ROOT_DIR  # type: ignore[reportPrivateUsage]
+    previous = server_mod._ROOT_DIR
     with tempfile.TemporaryDirectory() as tmp:
         # The module uses a global as its root; tests deliberately share it.
-        server_mod._ROOT_DIR = tmp  # type: ignore[reportConstantRedefinition, reportPrivateUsage]
+        server_mod._ROOT_DIR = tmp
         yield tmp
-        server_mod._ROOT_DIR = previous  # type: ignore[reportConstantRedefinition, reportPrivateUsage]
+        server_mod._ROOT_DIR = previous

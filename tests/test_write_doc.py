@@ -67,6 +67,12 @@ class TestWriteDocTool(unittest.TestCase):
     cross-test interference.
     """
 
+    # Attributes set in setUpClass; annotated for mypy.
+    root_dir: str
+    port: int
+    server: ServerProcess
+    client: MCPClient
+
     @classmethod
     def setUpClass(cls) -> None:
         """Build the test index and start the server and client."""
@@ -442,9 +448,9 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
 
         The ``file_metadata`` entry for the just-written path is deleted.
         """
-        import wywy_docs.server as server_mod  # type: ignore[attr-defined]
+        import wywy_docs.server as server_mod
 
-        server_mod._ROOT_DIR = self.root_dir  # type: ignore[reportPrivateUsage]
+        server_mod._ROOT_DIR = self.root_dir
 
         with patch(
             "wywy_docs.server.build_index",

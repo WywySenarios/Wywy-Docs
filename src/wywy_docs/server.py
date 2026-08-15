@@ -479,7 +479,7 @@ def main() -> None:
     # `_ROOT_DIR` is a module-level mutable shared with tests; the `global`
     # statement is the deliberate mechanism to set it from `main()`.
     global _ROOT_DIR  # noqa: PLW0603
-    _ROOT_DIR = os.environ.get(  # type: ignore[reportConstantRedefinition]
+    _ROOT_DIR = os.environ.get(
         "WYWY_DOCS_DIR",
         os.environ.get("WYWY_ROOT", str(Path.cwd())),
     )

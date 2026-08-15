@@ -16,7 +16,7 @@ class DocFrontmatter(BaseModel):
     ``last_updated`` (those are auto-populated server-side).
     """
 
-    model_config = {"extra": "allow"}  # type: ignore[assignment]
+    model_config = {"extra": "allow"}
 
     def __init__(
         self,

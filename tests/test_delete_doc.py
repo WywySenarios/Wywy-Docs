@@ -45,6 +45,12 @@ class TestDeleteDocTool(unittest.TestCase):
     ``self._testMethodName`` to reference its own pre-indexed doc.
     """
 
+    # Attributes set in setUpClass; annotated for mypy.
+    root_dir: str
+    port: int
+    server: ServerProcess
+    client: MCPClient
+
     @classmethod
     def setUpClass(cls) -> None:
         """Create a temp root, start the server, and connect the client."""
@@ -310,9 +316,9 @@ class TestDeleteDocToolIndexFailure(unittest.TestCase):
         The ``PermissionError`` is a subclass of ``OSError``; the tool
         raises ``RuntimeError`` → -32603.
         """
-        import wywy_docs.server as server_mod  # type: ignore[attr-defined]
+        import wywy_docs.server as server_mod
 
-        server_mod._ROOT_DIR = self.root_dir  # type: ignore[reportPrivateUsage]
+        server_mod._ROOT_DIR = self.root_dir
 
         with patch(
             "pathlib.Path.unlink",

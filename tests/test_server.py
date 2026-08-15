@@ -121,7 +121,7 @@ def find_free_port() -> int:
     """Return a random ephemeral port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind((HOST, 0))
-        return s.getsockname()[1]
+        return int(s.getsockname()[1])
 
 
 def create_file(
@@ -515,7 +515,7 @@ class ServerProcess:
             readable, _, _ = select.select([self.process.stderr], [], [], 1.0)
             if not readable:
                 return "<stderr not yet available>"
-            data = self.process.stderr.read()
+            data: bytes = self.process.stderr.read()
         except OSError:
             return "<unreadable>"
         return data.decode("utf-8", errors="replace")[:2000]
@@ -705,6 +705,12 @@ class TestToolsList(unittest.TestCase):
 
 class TestSearchDocsTool(unittest.TestCase):
     """The ``search_docs`` tool performs FTS5 full-text search."""
+
+    # Attributes set in setUpClass; annotated for mypy.
+    root_dir: str
+    port: int
+    server: ServerProcess
+    client: MCPClient
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -917,6 +923,12 @@ class TestSearchDocsTool(unittest.TestCase):
 class TestGetDocTool(unittest.TestCase):
     """The ``get_doc`` tool returns full document content and frontmatter."""
 
+    # Attributes set in setUpClass; annotated for mypy.
+    root_dir: str
+    port: int
+    server: ServerProcess
+    client: MCPClient
+
     @classmethod
     def setUpClass(cls) -> None:
         """Build the test index and start the server and client."""
@@ -1082,10 +1094,10 @@ class TestEnsureIndexMissingDirectories(unittest.TestCase):
 
         The result is an empty FTS5 index instead of a crash.
         """
-        import wywy_docs.server as server_mod  # type: ignore[attr-defined]
+        import wywy_docs.server as server_mod
 
         with self.assertLogs(server_mod.logger, level="WARNING") as cm:
-            server_mod._ensure_index(self.root_dir)  # type: ignore[reportPrivateUsage]
+            server_mod._ensure_index(self.root_dir)
 
         log_text = "\n".join(cm.output)
         assert "docs directory does not exist" in log_text
