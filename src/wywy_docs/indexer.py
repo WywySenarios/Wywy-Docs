@@ -123,7 +123,9 @@ def build_index(root_dirs: list[str], db_path: str) -> None:
     else:
         root = os.path.commonpath(root_dirs)
 
-    conn = sqlite3.connect(db_path)
+    # 30s busy timeout: overlapping starts (restart-looping unit + manual
+    # smoke run) must not fail with `database is locked`.
+    conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
 
     conn.execute(

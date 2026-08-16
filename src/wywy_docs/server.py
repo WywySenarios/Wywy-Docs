@@ -58,20 +58,21 @@ def _section_dirs(root_dir: str) -> tuple[str, str]:
 
 
 def _ensure_index(root_dir: str) -> None:
-    """Build the FTS5 index if ``docs_index.db`` does not exist.
+    """Build (or incrementally refresh) the FTS5 index.
 
-    Warns (without crashing) if ``docs/`` or ``internal/`` is missing;
-    the index is still created, empty.
+    Runs on every start; ``build_index`` skips files whose mtime is
+    unchanged, so this is cheap after the first run.  Warns (without
+    crashing) if ``docs/`` or ``internal/`` is missing; the index is
+    still created, empty.
     """
     db = _db_path(root_dir)
-    if not Path(db).is_file():
-        Path(db).parent.mkdir(parents=True, exist_ok=True)
-        docs_dir, internal_dir = _section_dirs(root_dir)
-        if not Path(docs_dir).is_dir():
-            logger.warning("docs directory does not exist: %s", docs_dir)
-        if not Path(internal_dir).is_dir():
-            logger.warning("internal directory does not exist: %s", internal_dir)
-        build_index(root_dirs=[docs_dir, internal_dir], db_path=db)
+    Path(db).parent.mkdir(parents=True, exist_ok=True)
+    docs_dir, internal_dir = _section_dirs(root_dir)
+    if not Path(docs_dir).is_dir():
+        logger.warning("docs directory does not exist: %s", docs_dir)
+    if not Path(internal_dir).is_dir():
+        logger.warning("internal directory does not exist: %s", internal_dir)
+    build_index(root_dirs=[docs_dir, internal_dir], db_path=db)
 
 
 # ── Path helpers ────────────────────────────────────────────────────────
@@ -484,7 +485,9 @@ def main() -> None:
         os.environ.get("WYWY_ROOT", str(Path.cwd())),
     )
     _ensure_index(_ROOT_DIR)
-    port = args.port if args.port is not None else int(os.environ.get("PORT", "2530"))
+    # `or "2530"` guards against an empty PORT env var (e.g. a systemd
+    # Environment=PORT=), which would make int("") raise at startup.
+    port = args.port if args.port is not None else int(os.environ.get("PORT") or "2530")
     mcp.settings.port = port
     mcp.run(transport="sse")
 

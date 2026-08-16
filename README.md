@@ -2,9 +2,32 @@
 
 ## MCP service configuration
 
-Set `WYWY_DOCS_DIR` to this checkout before running `scripts/install-service.sh`.
-The service stores that path in `~/.config/wywy-docs-mcp/environment` and uses it
-as the documentation root.
+Install the systemd user service from this checkout:
+
+```sh
+uv sync
+uv run wywy-docs-install
+```
+
+`wywy-docs-install` derives the checkout root from the package location,
+writes `wywy-docs-mcp.service` and the environment file
+(`~/.config/wywy-docs-mcp/environment`, which stores `WYWY_DOCS_DIR`), then
+prints the `systemctl --user` commands to enable and start it. It never
+invokes `systemctl` itself — run the printed steps.
+
+Manual dev run (no service):
+
+```sh
+uv run wywy-docs-serve --port 2530
+```
+
+The index is built incrementally at server startup (unchanged files are
+skipped by mtime). Force a full rebuild from the repo root:
+
+```sh
+rm "$PWD/wywy_docs/docs_index.db"
+systemctl --user restart wywy-docs-mcp
+```
 
 ## MCP tools
 

@@ -1,12 +1,8 @@
 # CI — Wywy-Docs
 #
-# Runs tests inside the Docker image (./test.sh --docker).  The default
-# bare-metal mode of test.sh is for local hosts; CI uses Docker until the
-# self-hosted runners are provisioned with uv/bats/python.
-#
-# TODO: update runs-on tags when self-hosted runners are deployed.
-#   Default: runs-on: ubuntu-latest
-#   Self-hosted: runs-on: [self-hosted, wywy]
+# Runs tests inside an official uv container image.  test.sh runs the
+# bare-metal pytest path inside the job container; uv and Python 3.12 come
+# from the image, so the self-hosted runners need no uv provisioning.
 
 name: Wywy-Docs CI
 
@@ -19,8 +15,10 @@ on:
 jobs:
   test:
     runs-on: [self-hosted, wywy, dind]
+    container:
+      image: ghcr.io/astral-sh/uv:python3.12-trixie-slim
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run tests (Docker)
-        run: ./test.sh --docker
+      - name: Run tests
+        run: ./test.sh

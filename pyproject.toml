@@ -11,6 +11,10 @@ dependencies = [
     "uvicorn",
 ]
 
+[project.scripts]
+wywy-docs-serve = "wywy_docs.server:main"
+wywy-docs-install = "wywy_docs.install:main"
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -35,6 +39,9 @@ convention = "google"
 # checks, avoiding import-time MCP wiring) and reach into private members
 # (module globals shared with tests).
 "tests/**" = ["S101", "PLC0415", "SLF001"]
+# install.py deliberately prints user-facing steps; a print() call is the
+# whole point of the command.
+"src/wywy_docs/install.py" = ["T201"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
