@@ -388,9 +388,20 @@ class MCPClient:
             conn.close()
 
     def close(self) -> None:
-        """Shut down the SSE reader and close the connection."""
+        """Shut down the SSE reader and close the connection.
+
+        The reader thread blocks in ``readline()`` on the SSE socket; the
+        server keeps the stream open and only emits a keepalive ping every
+        15s.  Closing the ``HTTPConnection`` would wait on the reader's
+        buffer lock until that ping lands, so shut the socket down first to
+        unblock the reader, then close the connection normally.
+        """
         self._reader_stop.set()
         if self._sse_conn is not None:
+            with suppress(OSError):
+                sock = self._sse_conn.sock
+                if sock is not None:
+                    sock.shutdown(socket.SHUT_RDWR)
             with suppress(OSError):
                 self._sse_conn.close()
 
