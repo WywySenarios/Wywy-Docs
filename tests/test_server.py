@@ -10,6 +10,7 @@ assert on JSON-RPC responses.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -27,12 +28,14 @@ from contextlib import contextmanager, suppress
 from http import HTTPStatus
 from http.client import HTTPConnection, HTTPResponse
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 from urllib.error import URLError
 from urllib.request import urlopen
 
 import pytest
-from mcp.types import INVALID_PARAMS
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from mcp.types import INVALID_PARAMS, CallToolResult, TextContent
 
 from wywy_docs.indexer import build_index
 
@@ -710,6 +713,23 @@ class TestToolsList(unittest.TestCase):
         search_docs_tool = next(t for t in tools if t["name"] == "search_docs")
         assert "literal" in search_docs_tool["description"]
 
+    def test_tools_list_exposes_no_output_schema(self) -> None:
+        """``tools/list`` advertises no ``outputSchema`` for any tool.
+
+        The server must not declare return-type annotations, so FastMCP
+        leaves the schema off the wire entirely.  Both an absent key and
+        an explicit ``null`` count as "no schema".
+        """
+        resp = self.client.send_message(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        )
+        assert "result" in resp
+        tools = resp["result"]["tools"]
+        assert len(tools) > 0
+        for tool in tools:
+            wire_tool = cast("dict[str, object]", tool)
+            assert wire_tool.get("outputSchema") is None
+
 
 class TestSearchDocsTool(unittest.TestCase):
     """The ``search_docs`` tool performs FTS5 full-text search."""
@@ -1236,6 +1256,87 @@ class TestServerMissingDirectories(unittest.TestCase):
         stderr = server.read_stderr()
         assert "internal directory does not exist" in stderr
         assert "docs directory does not exist" not in stderr
+
+
+class TestMCPClientRoundTrip(unittest.TestCase):
+    """A real ``mcp`` SDK client can call the tools over SSE.
+
+    Drives the venv's own ``mcp`` client (``ClientSession`` over
+    ``sse_client``) through the same path a production client uses.  The
+    SDK validates successful tool results against the ``outputSchema``
+    advertised in ``tools/list`` (``mcp/client/session.py:432-435``), so
+    this reproduces the -32600 failure exactly: while the server declares
+    ``-> str`` return annotations, every successful call raises
+    ``RuntimeError``.
+    """
+
+    # Attributes set in setUpClass; annotated for mypy.
+    root_dir: str
+    port: int
+    server: ServerProcess
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Build the test index and start the server."""
+        cls.root_dir = setup_temp_wywy_root()
+        cls.port = find_free_port()
+        build_test_index(
+            cls.root_dir,
+            {
+                "docs/hello.mdx": (
+                    "---\ntitle: Hello World\n---\nThis is the hello doc body."
+                ),
+            },
+        )
+        cls.server = ServerProcess(cls.root_dir, cls.port)
+        cls.server.start()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Stop the server and remove the temp root."""
+        cls.server.stop()
+        shutil.rmtree(cls.root_dir, ignore_errors=True)
+
+    async def _call_tool(
+        self,
+        name: str,
+        arguments: dict[str, object],
+    ) -> CallToolResult:
+        """Call *name* with *arguments* via a real MCP SSE client.
+
+        Opens a fresh SSE session, initializes it, lists tools (so the
+        client caches their output schemas), and returns the tool result.
+        """
+        async with (
+            sse_client(f"http://{HOST}:{self.port}/sse") as streams,
+            ClientSession(*streams) as session,
+        ):
+            await session.initialize()
+            await session.list_tools()
+            return await session.call_tool(name, arguments)
+
+    @staticmethod
+    def _joined_text(result: CallToolResult) -> str:
+        """Join the ``text`` of every ``TextContent`` block in *result*."""
+        return " ".join(
+            block.text for block in result.content if isinstance(block, TextContent)
+        )
+
+    def test_search_docs_succeeds_via_real_client(self) -> None:
+        """A real MCP client can call ``search_docs`` without -32600."""
+        result = asyncio.run(
+            self._call_tool("search_docs", {"query": "hello", "max_results": 10}),
+        )
+        assert not result.isError
+        assert "hello" in self._joined_text(result)
+
+    def test_get_doc_succeeds_via_real_client(self) -> None:
+        """A real MCP client can call ``get_doc`` without -32600."""
+        result = asyncio.run(
+            self._call_tool("get_doc", {"path": "docs/hello.mdx"}),
+        )
+        assert not result.isError
+        assert "hello doc body" in self._joined_text(result)
 
 
 if __name__ == "__main__":

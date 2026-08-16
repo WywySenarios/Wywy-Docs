@@ -233,8 +233,13 @@ def _reindex_after_write(section: str, path: str) -> None:
 # ── Tool implementations ──────────────────────────────────────────────
 
 
+# These tool functions deliberately have no return annotation. FastMCP
+# uses a return annotation to advertise an outputSchema in tools/list, which
+# makes standards-compliant MCP clients fail with -32600 on successful calls
+# (the server returns TextContent-only). The per-line type-ignore/noqa below
+# keep mypy strict and ruff(ALL) satisfied.
 @mcp.tool()
-def search_docs(query: str, max_results: int = 10) -> str:
+def search_docs(query: str, max_results: int = 10):  # type: ignore[no-untyped-def]  # noqa: ANN201
     """Full-text search across documentation.
 
     Args:
@@ -281,7 +286,7 @@ def search_docs(query: str, max_results: int = 10) -> str:
 
 
 @mcp.tool()
-def get_doc(path: str) -> str:
+def get_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
     """Retrieve document content and frontmatter by path.
 
     Args:
@@ -301,12 +306,12 @@ def get_doc(path: str) -> str:
 
 
 @mcp.tool()
-def write_doc(
+def write_doc(  # type: ignore[no-untyped-def]  # noqa: ANN201
     section: Section,
     path: str,
     content: str,
     frontmatter: dict[str, object] | None = None,
-) -> str:
+):
     """Create or update a documentation file.
 
     Args:
@@ -363,7 +368,7 @@ def write_doc(
 
 
 @mcp.tool()
-def delete_doc(path: str) -> str:
+def delete_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
     """Delete a documentation file.
 
     Args:
@@ -441,13 +446,6 @@ async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
     except Exception as e:
         # Boundary safety net: any unexpected error becomes INTERNAL_ERROR.
         raise McpError(ErrorData(code=INTERNAL_ERROR, message=str(e))) from e
-
-    if isinstance(result, tuple):
-        # FastMCP returns (content, structured_content) when a tool
-        # declares a return type annotation.  The unstructured content is
-        # what the tools previously produced; structured content is unused
-        # here to keep the response shape unchanged.
-        result = result[0]
 
     if isinstance(result, list):
         return ServerResult(CallToolResult(content=result, isError=False))
