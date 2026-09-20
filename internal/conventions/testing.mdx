@@ -1,0 +1,83 @@
+---
+published: "2026-09-17T19:49:01"
+last_updated: "2026-09-17T19:55:32"
+---
+
+> Cross-language rules for writing tests in Wywy repositories. Applies to every test file in every repo, regardless of language or runner: shell (`bats`), Python (`pytest`), Go (`testing`), C, and anything else.
+
+## Assert on structure, never on raw text
+
+**Tests MUST NOT use raw string matching as an assertion mechanism.**
+
+Raw string matching is asserting on the presence, absence, or equality of unparsed substrings — or unanchored regex scans for a value — in command output or file contents, instead of parsing the content and asserting on its fields. Banned forms include:
+
+- **shell / bats:** `grep 'kind: Service'`, `grep -q 'name: postgres'`, `[[ "$output" == *"port: 5432"* ]]`
+- **Python / pytest:** `assert "kind: Service" in output`, `assert 'port: 5432' in response.text`
+- **Go:** `strings.Contains(out, "kind: Service")`
+- **C:** `strstr(buf, "kind: Service") != NULL`
+- **any language:** regex scanning for a value in unparsed output (`re.search(r'port: (\d+)', out)`) when the output has a parseable structure
+
+Rationale:
+
+- **False positives:** a substring can appear anywhere — a comment, an unrelated resource, a different field with a similar name. The assertion passes for the wrong reason.
+- **False negatives:** formatting shifts (indentation, key order, quoting, line wrapping) break the match even though the contract is unchanged.
+- **No diagnostics:** a failed substring check reports "not found", not "the actual value was X".
+- **Asserting prose, not contracts:** structured output (YAML, JSON, XML, dotenv) has a defined shape; the test must assert on that shape.
+
+## Required: structural assertions
+
+Parse the output or file with the language's real parser for the format, then assert on typed fields with exact expected values. Never hand-roll substring logic on unparsed text when a parser exists.
+
+| Format                                       | Required mechanism (per language)                                                              | Banned alternative                                                             |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| YAML                                         | shell: `yq`; Python: `yaml.safe_load`; Go: `gopkg.in/yaml.v3` / `sigs.k8s.io/yaml`; C: libyaml | `grep 'kind: Service'`; `"kind: Service" in out`; `strings.Contains`; `strstr` |
+| JSON                                         | shell: `jq`; Python: `json.loads`; Go: `encoding/json` into a struct; C: jansson / cJSON       | `grep '"port": 5432'`; `'"port": 5432' in text`                                |
+| XML                                          | Python: `xml.etree.ElementTree`; Go: `encoding/xml`; C: libxml2                                | substring match on the serialized document                                     |
+| line-oriented KEY=VALUE (dotenv, env output) | exact-key line extraction — see the exception below                                            | `grep 'KEY='`; `"KEY=value" in text`                                           |
+| tabular / CSV                                | the format's reader (Python `csv`, Go `encoding/csv`); assert on fields                        | `grep -c` on rows                                                              |
+| cluster resource counts                      | `kubectl get ... -o json` + `jq` (or the equivalent client API)                                | `kubectl get ... \| grep -c name`                                              |
+
+### The line-oriented exception
+
+Exact-key extraction from a line-oriented KEY=VALUE format is sanctioned: the format is line-oriented, the key anchor is exact, and the result is the bare value — field extraction, not raw string matching. Per language:
+
+- **shell:** `sed -n 's/^KEY=//p'`
+- **Python:** read lines, split each on the first `=`, compare the key, take the value
+- **Go:** `strings.Cut(line, "=")` and compare the key
+- **C:** `strncmp` the key prefix on the line, then take the rest
+
+This applies to dotenv files and to any output that is a list of exact KEY=VALUE lines. For formats that are not line-oriented (YAML, JSON, XML), there is no exception — parse them.
+
+## Rules
+
+1. **No substring or unanchored-regex assertions on unparsed YAML, JSON, XML, or manifest output.** Parse it and assert on fields.
+2. **No `grep`/regex scanning for a VALUE in program output.** For structured output, parse it. For genuinely unstructured prose, assert on the exact line with anchored patterns (`^...$`) — never a bare substring.
+3. **No raw string equality on entire generated documents.** Compare parsed structures or asserted fields, not the whole text (formatting noise).
+4. **Code-content checks** (asserting "this file contains X") are a last resort and MUST be anchored, value-precise extractions on non-comment lines — never a bare substring search for a value that could appear in a comment or a different context. Prefer a runtime behavior test over source-text inspection whenever the behavior is executable.
+5. **Plaintext-leak guards** (e.g., "the encrypted file must not contain the plaintext value") are the same rule inverted: anchor to the exact full value line, scope to non-comment lines, and treat them as security guards, not value assertions.
+6. **Meaningful diagnostics:** every assertion failure message MUST show the actual observed value or state — not just "expected X not found". When parsing, show the parsed field's actual value.
+7. **Comment lines are not content:** when asserting on file contents, strip comments before extraction, and state that you did.
+8. **No excuses when a parser exists.** If the format has a parser in the language, text scanning is a defect. Only when no parser exists may you anchor the match to the field's exact position and value.
+
+## Per-language notes
+
+- **Shell / bats:** parse YAML with `yq` and JSON with `jq`; use `run` + `$status` / `$output` / `$stderr`; the dotenv form is `sed -n 's/^KEY=//p'`.
+- **Python / pytest:** `yaml.safe_load`, `json.loads`, `xml.etree.ElementTree`; assert on dict/list fields with `==`; never `"..." in response.text` for a field value.
+- **Go:** unmarshal into structs (`encoding/json`, `gopkg.in/yaml.v3`) and compare fields; table-driven tests are preferred; never `strings.Contains` on raw output for a field value.
+- **C:** use the format's library (jansson, cJSON, libyaml, libxml2); assert on parsed members; never `strstr` for a field value.
+- **Other languages:** same rule — use the ecosystem's real parser for the format.
+
+## Enforcement
+
+- Reviewers and agents MUST reject test changes that introduce raw string matching where a structural assertion is possible — in any language.
+- Implementation plans MUST NOT specify raw string matching as a test mechanism in any language. A plan that does is defective and must be revised before implementation.
+- This ban applies retroactively to existing tests in every repo: converting raw string matching to structural assertions is a required cleanup, not optional polish.
+
+## Related conventions
+
+| Convention                         | File                                           |
+| ---------------------------------- | ---------------------------------------------- |
+| CI and test entrypoint (`test.sh`) | [`tech-stack/ci.mdx`](tech-stack/ci.mdx)       |
+| Bash scripting                     | [`languages/bash.mdx`](languages/bash.mdx)     |
+| Python conventions                 | [`languages/python.mdx`](languages/python.mdx) |
+| Go conventions                     | [`languages/go.mdx`](languages/go.mdx)         |
