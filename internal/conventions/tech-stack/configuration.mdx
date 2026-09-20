@@ -1,7 +1,7 @@
 ---
 title: Configuration Conventions
 published: "2026-06-05T00:00:00"
-last_updated: "2026-08-09T14:34:29"
+last_updated: "2026-09-16T00:25:30"
 ---
 
 > **Cross-cutting** — applies to all services regardless of language.
@@ -26,7 +26,7 @@ The only permitted exception is values that nobody could reasonably want to chan
 
 ```bash
 # START - Sync app
-DATABASE_PORT=5432
+DATABASE_HOST=postgres
 POSTGRES_USER=postgres
 BACKUP_HOST=sshbackup.ericzhu.me
 # END - Sync app
@@ -45,7 +45,7 @@ service .env.dev > service .env > universal .env.dev > universal .env
 ### Value conventions
 
 - Booleans: `TRUE`/`FALSE` (uppercase).
-- Numeric values: unquoted (`DATABASE_PORT=5432`).
+- Numeric values: unquoted (`AGENTIC_API_PORT=2524`).
 - String values: unquoted (`BACKUP_HOST=...`).
 - `###################################################################################` for section separators.
 
@@ -72,6 +72,27 @@ PBS_HOST=my-backup-machine-2
 ```
 
 The actual hostname values belong in the deployed `.env` file on each machine, not in the example templates. This keeps templates portable and prevents accidental hostname leakage into CI or test environments.
+
+### Port convention
+
+**Standard service ports are constants, not configuration.** Cluster DNS abstracts the hostname (pods reach the DB as `postgres`, not as an IP), so the only thing that varies about an endpoint is the host — the port is fixed by the service protocol. Hard-code well-known ports (e.g. PostgreSQL `5432`) wherever they are consumed: k8s manifests, scripts, and templates. Never add a `DATABASE_PORT`-style key to env files or the network source.
+
+✅ **Do this:**
+
+```yaml
+# k8s manifest
+ports:
+  - port: 5432
+```
+
+❌ **Don't do this:**
+
+```bash
+# config/.env
+DATABASE_PORT=5432
+```
+
+Ports that are genuinely deployment-specific (custom services, agentic API ports, CI ports) remain configuration — the hard-coding exception covers only well-known service defaults.
 
 ## Template placeholders
 
