@@ -1,0 +1,127 @@
+---
+title: Install / uninstall script conventions
+published: "2026-09-22T16:02:28"
+last_updated: "2026-09-22T18:58:37"
+---
+
+# Install / uninstall script conventions
+
+Wywy-wide rules for install/uninstall and state-changing shell scripts, across every
+wywy repo. The reference implementation is the wc meta repo (`wc/scripts/install.sh`,
+`wc/scripts/uninstall.sh`, and their `install/` + `uninstall/` step dirs).
+
+## Non-negotiable
+
+- Every script starts with `set -euo pipefail`.
+- Fail fast: a real failure aborts the script with its actual error. Never mask one.
+
+## Forbidden: error-swallowing
+
+These patterns hide real failures and are forbidden. The "already done" case is handled
+with explicit guards, never by tolerating failure.
+
+### `|| true`
+
+```sh
+# BAD: swallows "AlreadyExists" AND real failures (RBAC denied, API down)
+kubectl create namespace wc 2>/dev/null || true
+
+# GOOD: check-then-act — only "already exists" is skipped; a real failure aborts
+if ! kubectl get namespace wc >/dev/null 2>&1; then
+    kubectl create namespace wc
+fi
+```
+
+### `>/dev/null 2>&1` on state-changing commands
+
+```sh
+# BAD: hides the deletion confirmation and any real error
+kubectl delete deployment wc --ignore-not-found >/dev/null 2>&1 || true
+
+# GOOD: --ignore-not-found already returns 0 for missing resources; show real output
+kubectl delete deployment wc --ignore-not-found
+```
+
+### `2>/dev/null` on fallback attempts
+
+```sh
+# BAD: hides WHY the first unmount failed (the fallback exists for that, but the error
+#      text explains the state); the trailing `|| true` masks a genuinely stuck mount
+fusermount3 -u "$m" 2>/dev/null || fusermount3 -uz "$m" 2>/dev/null || true
+
+# GOOD: guard on state, let errors show, fail if both attempts fail
+if mountpoint -q "$m"; then
+    fusermount3 -u "$m" || fusermount3 -uz "$m"
+fi
+```
+
+## Allowed suppression: existence probes only
+
+Suppress output only when a command is a pure exit-code test and its output is junk:
+
+- `command -v tool`
+- `kubectl get --raw /healthz`
+- `grep -q pattern file`
+- `mountpoint -q dir`
+
+These appear inside `if` conditions; they are tests, not operations. When a probe's
+error would be noise for the normal "not present" case (e.g. `grep` on a missing file),
+keep `2>/dev/null`; otherwise show output.
+
+## Idempotency
+
+State-changing steps must be safe to re-run: check-then-act, never tolerate failure.
+
+```sh
+# BAD: tolerates failure — a real error (no user bus, systemd broken) is silently
+#      swallowed and the script reports success
+systemctl --user disable --now wc-fuse.service >/dev/null 2>&1 || true
+
+# GOOD: guard on the precondition; a real failure still aborts
+if [[ -f ~/.config/systemd/user/wc-fuse.service ]]; then
+    systemctl --user disable --now wc-fuse.service
+fi
+```
+
+## Step layout contract
+
+- Steps live in `scripts/install/N-name.sh` and `scripts/uninstall/N-name.sh`.
+- Uninstall step N reverses install step N; the uninstall loop runs steps descending.
+- Each step self-guards (already-satisfied -> no-op).
+- Shared plumbing lives in ONE `scripts/lib.sh` (fail-closed checks, output helpers).
+  Steps source it; never reimplement.
+
+## Output
+
+- Show as much as possible: a progress line for every action, confirmations included.
+- Errors go to stderr, prefixed by the failing step.
+- `--dry-run` prints the plan and exits without changing anything.
+
+## Text coloring
+
+Color is a TTY-only nicety, never part of the data:
+
+- Headers (`==> step`) are **yellow**.
+- Info/progress lines are **light blue**.
+- Errors are **red**, on stderr.
+- Off when stdout is not a TTY; honor `NO_COLOR`.
+
+Reference helpers (`scripts/lib.sh`):
+
+```sh
+if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
+    COLOR_HEADER=$'\033[33m'; COLOR_INFO=$'\033[94m'; COLOR_ERROR=$'\033[31m'; COLOR_RESET=$'\033[0m'
+else
+    COLOR_HEADER=""; COLOR_INFO=""; COLOR_ERROR=""; COLOR_RESET=""
+fi
+header() { printf '%s==> %s%s\n' "$COLOR_HEADER" "$*" "$COLOR_RESET"; }
+info() { printf '%s    %s%s\n' "$COLOR_INFO" "$*" "$COLOR_RESET"; }
+error() { printf '%s%s%s\n' "$COLOR_ERROR" "$*" "$COLOR_RESET" >&2; }
+```
+
+## Fail closed
+
+- Never install a cluster; never create or inject a key. Abort with actionable
+  instructions when a prerequisite is missing (e.g. an expected Secret).
+- The k8s cluster is the operator's choice: fail closed unless kubectl is on PATH and
+  the cluster is reachable.
