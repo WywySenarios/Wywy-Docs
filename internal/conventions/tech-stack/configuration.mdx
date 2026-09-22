@@ -1,7 +1,7 @@
 ---
 title: Configuration Conventions
 published: "2026-06-05T00:00:00"
-last_updated: "2026-09-16T00:25:30"
+last_updated: "2026-09-22T18:58:04"
 ---
 
 > **Cross-cutting** — applies to all services regardless of language.
@@ -94,6 +94,44 @@ DATABASE_PORT=5432
 
 Ports that are genuinely deployment-specific (custom services, agentic API ports, CI ports) remain configuration — the hard-coding exception covers only well-known service defaults.
 
+## Networking conventions
+
+### Hostnames inside containers
+
+A container or pod **MUST** address a peer endpoint by the platform's native DNS name.
+
+- **Docker Compose:** the compose service name (`django`, `cache`).
+- **Kubernetes:** the Service name within the namespace (`postgres`), or the FQDN (`postgres.master-database.svc.cluster.local`) across namespaces.
+
+**External hosts** (VMs and machines outside the compose/cluster network) use a reserved, environment-stable name from the `*.internal` namespace — e.g. the DB VM is `db.internal`. This is the only class of literal hostname a service may hard-code for a peer.
+
+✅ **Do this:**
+
+```bash
+# In-cluster container
+DATABASE_HOST=postgres                # K8s Service name
+# Dev machine / non-cluster consumer
+DATABASE_HOST=db.internal             # external-host name
+```
+
+❌ **Don't do this:**
+
+```bash
+DATABASE_HOST=192.0.2.131             # IP literal
+DATABASE_HOST=db-prod-1               # machine hostname
+```
+
+`localhost` is only valid for a process addressing itself.
+
+### Name resolution, not IP plumbing
+
+IP addresses are an implementation detail of the network layer and **MUST NOT** appear in application code, manifests, env files, or cluster-run scripts:
+
+- **Single source:** every external-host `name -> IP` mapping lives only in the sops-encrypted hosts file (`secrets/<mode>/hosts.sops.yaml`, hosts-format). Committed code and config never contain a real IP.
+- **In-cluster resolution:** CoreDNS resolves `*.internal` names (hosts plugin); peer services resolve via Service DNS.
+- **Dev machine:** `scripts/dev/hostaliases.sh` regenerates `$HOME/.hostaliases` from the same hosts file and exports `HOSTALIASES`, so the same names resolve outside the cluster.
+- **Scripts** read the file directly with `sops -d --output-type binary` + `awk` (e.g. a `hosts_ip <name>` helper) — no python, no per-script IP configuration.
+
 ## Template placeholders
 
 Two notations, split by file type:
@@ -128,7 +166,7 @@ Committed template files (cloud-init snippets, `config/db/*`, `*.template`) mark
 
 ### In use
 
-- `{{NAME}}`: `scripts/proxmox/vm/cloud-init/database-vm.yaml.template` (`{{BOOTSTRAP_B64}}`, `{{PGDG_KEY_B64}}`), `k8s-worker.yaml.template` (`{{NODE_ROLE}}`), `config/db/pg_hba.conf` (`{{K8S_WORKER_IPS}}`, `{{K8S_POD_CIDR}}`). Renderers: `scripts/proxmox/vm/db/update-pg-hba.sh` (comment-aware awk) and `scripts/proxmox/vm/db/create-template.sh` (sed — safe only because comments use `<NAME>`).
+- `{{NAME}}`: `scripts/proxmox/vm/cloud-init/database-vm.yaml.template` (`{{BOOTSTRAP_B64}}`, `{{PGDG_KEY_B64}}`), `scripts/proxmox/vm/cloud-init/k8s-worker.yaml.template` (`{{NODE_ROLE}}`), `config/db/pg_hba.conf` (`{{K8S_WORKER_IPS}}`, `{{K8S_POD_CIDR}}`). Renderers: `scripts/proxmox/vm/db/update-pg-hba.sh` (comment-aware awk) and `scripts/proxmox/vm/db/create-template.sh` (sed — safe only because comments use `<NAME>`).
 - `<NAME>`: `scripts/install/preseeds/proxmox/preseed.cfg`, rendered by `build-proxmox-iso.sh`.
 
 ## YAML config
@@ -160,47 +198,46 @@ data:
 
 ### Location
 
-`config/agentic/pipeline.yml`
+`config/agentic/.env` (production) and `config/agentic/.env.dev` (development overrides), following the env-file layout above.
 
-### Schema
+### Keys
 
-```yaml
-defaults:
-  timeout_seconds: 600
-  max_retries: 3
-  max_iterations: 5
-  retry_backoff: [30, 60, 120]
-  test_timeout_seconds: 60
-
-stages:
-  coder:
-    timeout_seconds: 1200
+```bash
+PIPELINE_TIMEOUT_SECONDS=600
+PIPELINE_MAX_RETRIES=3
+PIPELINE_MAX_ITERATIONS=5
+PIPELINE_RETRY_BACKOFF_SECONDS=30,60,120
 ```
 
 - All timeouts in seconds.
-- All values have documented defaults.
-- Stage-specific overrides override `defaults`.
+- `PIPELINE_RETRY_BACKOFF_SECONDS` is a comma-separated list of seconds between retries.
+- All values have documented defaults in the service config.
 
-### Env var overrides
+### Overrides
 
-Environment variables override YAML config values:
+Shell environment variables take precedence over the env-file values:
 
 ```
 PIPELINE_TIMEOUT_SECONDS=900
 ```
 
-Env var names are `PIPELINE_<YAML_KEY>_<YAML_SUBKEY>` uppercased.
+Env var names are `PIPELINE_<KEY>` uppercased.
 
 ## Loading config
 
-Docker Compose loads env files via `--env-file`:
+Docker Compose loads env files via `--env-file` — universal first, then service-specific (see Priority above):
 
 ```bash
 docker compose \
   -f docker/docker-compose.base.yml \
   -f docker/docker-compose.dev.yml \
-  --env-file /etc/Wywy-Website-Control/config/cache/.env.cache.dev \
+  --env-file /etc/Wywy-Website-Control/config/.env \
+  --env-file /etc/Wywy-Website-Control/config/cache/.env \
+  --env-file /etc/Wywy-Website-Control/config/.env.dev \
+  --env-file /etc/Wywy-Website-Control/config/cache/.env.dev \
   up --build
 ```
+
+The control-repo run scripts (`scripts/run/<service>.sh`) assemble the compose files and env-file lists per mode — prefer them over invoking `docker compose` directly.
 
 Compose files reference config via environment variables — never hardcode paths or values.
