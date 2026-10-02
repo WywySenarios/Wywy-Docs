@@ -13,3 +13,6 @@ opencode.jsonc
 
 # Prettier cannot infer a parser for these.
 *.toml
+
+# band-aid: ignore plans dir until wc harness makes it obsolete
+internal/plans/
