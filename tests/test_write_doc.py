@@ -8,7 +8,9 @@ import + mock (no subprocess).
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -366,6 +368,39 @@ class TestWriteDocTool(unittest.TestCase):
         body_text = " ".join(str(item.get("text", "")) for item in content)
         assert unique_term in body_text
 
+    def test_written_doc_is_immediately_searchable(self) -> None:
+        """A written document is immediately searchable by its own path.
+
+        Parses the ``search_docs`` result (no substring matching) and asserts
+        the written document's exact path is present.
+        """
+        name = self._testMethodName
+        unique_term = f"UNIQUE_SEARCH_TERM_{name}"
+        resp = self._call(
+            "docs",
+            name,
+            f"# {unique_term}\nImmediately searchable content.",
+            frontmatter={"title": "Immediately Searchable"},
+        )
+        assert "result" in resp
+
+        search_resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": self._next_msg_id(),
+                "method": "tools/call",
+                "params": {
+                    "name": "search_docs",
+                    "arguments": {"query": unique_term, "max_results": 10},
+                },
+            },
+        )
+        assert "result" in search_resp
+        content = search_resp["result"]["content"]
+        body_text = " ".join(str(item.get("text", "")) for item in content)
+        results = json.loads(body_text)
+        assert f"docs/{name}.mdx" in [r["path"] for r in results]
+
     # ── Property 12 ────────────────────────────────────────────────────
 
     def test_write_reserved_frontmatter_rejected(self) -> None:
@@ -399,18 +434,152 @@ class TestWriteDocTool(unittest.TestCase):
 
 
 # ===========================================================================
+# Per-document reindex —  subprocess server with explicit cleanup
+# ===========================================================================
+
+
+class TestWriteDocPerDocumentReindex(unittest.TestCase):
+    """``write_doc`` reindexes only the written document.
+
+    A whole-tree rebuild would also reimport an unrelated document whose file
+    changed on disk without going through the tool.  This class owns its own
+    server so the on-disk mutation cannot leak into other test classes.
+    """
+
+    # Attributes set in setUpClass; annotated for mypy.
+    root_dir: str
+    port: int
+    server: ServerProcess
+    client: MCPClient
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        """Build the index (two docs) and start the server and client."""
+        cls.root_dir = setup_temp_wywy_root()
+        cls.port = find_free_port()
+        build_test_index(
+            cls.root_dir,
+            {
+                "docs/first.mdx": "---\ntitle: First\n---\nFirst stable body.",
+                "docs/unrelated.mdx": (
+                    "---\ntitle: Unrelated\n---\nOriginal unrelated body."
+                ),
+            },
+        )
+        cls.server = ServerProcess(cls.root_dir, cls.port)
+        cls.server.start()
+        cls.client = MCPClient(HOST, cls.port)
+        cls.client.connect()
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        """Close the client, stop the server, and remove the temp root."""
+        cls.client.close()
+        cls.server.stop()
+        shutil.rmtree(cls.root_dir, ignore_errors=True)
+
+    # ── JSON-RPC id counter ────────────────────────────────────────────
+
+    _next_id: int = 500
+
+    def _next_msg_id(self) -> int:
+        TestWriteDocPerDocumentReindex._next_id += 1
+        return TestWriteDocPerDocumentReindex._next_id
+
+    def _call(
+        self,
+        section: str,
+        path: str,
+        content: str,
+        frontmatter: dict[str, object] | None = None,
+    ) -> JsonRpcResponse:
+        """Send a ``write_doc`` tool-call and return the JSON-RPC response."""
+        return self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": self._next_msg_id(),
+                "method": "tools/call",
+                "params": {
+                    "name": "write_doc",
+                    "arguments": {
+                        "section": section,
+                        "path": path,
+                        "content": content,
+                        "frontmatter": frontmatter,
+                    },
+                },
+            },
+        )
+
+    def test_write_doc_leaves_unrelated_stale_row_untouched(self) -> None:
+        """A file changed on disk outside the tool is not reindexed by write_doc.
+
+        The unrelated document is rewritten on disk with a new body and mtime
+        (exactly the state a whole-tree ``build_index`` would reindex).  After
+        writing a third document through the tool, the unrelated document's
+        indexed content and recorded mtime must be unchanged.
+        """
+        db_path = Path(self.root_dir) / "wywy_docs" / "docs_index.db"
+        rel_path = "docs/unrelated.mdx"
+
+        def read_index_state() -> tuple[str, int]:
+            conn = sqlite3.connect(db_path)
+            try:
+                content = conn.execute(
+                    "SELECT content FROM docs_fts WHERE path = ?",
+                    (rel_path,),
+                ).fetchone()[0]
+                mtime = conn.execute(
+                    "SELECT mtime FROM file_metadata WHERE path = ?",
+                    (rel_path,),
+                ).fetchone()[0]
+            finally:
+                conn.close()
+            return content, mtime
+
+        original_content, original_mtime = read_index_state()
+
+        # Rewrite the unrelated file directly on disk with a new body, then
+        # force a distinct mtime so a whole-tree rebuild would reindex it.
+        create_file(
+            self.root_dir,
+            rel_path,
+            "---\ntitle: Unrelated\n---\nRewritten on disk body.",
+        )
+        rewritten_mtime_ns = original_mtime + 10_000_000_000
+        os.utime(
+            Path(self.root_dir) / rel_path,
+            ns=(rewritten_mtime_ns, rewritten_mtime_ns),
+        )
+
+        # Write an unrelated third document through the tool.
+        name = self._testMethodName
+        resp = self._call(
+            "docs",
+            name,
+            "# Third document\nWritten through the tool.",
+            frontmatter={"title": "Third"},
+        )
+        assert "result" in resp
+
+        after_content, after_mtime = read_index_state()
+        assert after_content == original_content
+        assert after_mtime == original_mtime
+
+
+# ===========================================================================
 # Test 11  —  direct import + mock (no subprocess)
 # ===========================================================================
 
 
 class TestWriteDocToolIndexFailure(unittest.TestCase):
-    """Behavior when ``build_index`` fails after a successful file write.
+    """Behavior when the per-document reindex fails after a successful file write.
 
     The tool returns a JSON-RPC error -32603 and the ``file_metadata``
     entry for the path is deleted.  This class does **not** use
     ``ServerProcess``.  Instead it imports ``wywy_docs.server`` directly,
     sets ``_ROOT_DIR`` to a temporary directory, and patches
-    ``build_index`` to fail.
+    ``reindex_doc`` to fail.
     """
 
     def setUp(self) -> None:
@@ -444,7 +613,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
     def test_write_doc_index_failure_returns_error_and_cleans_metadata(
         self,
     ) -> None:
-        """When ``build_index`` raises, the tool returns -32603.
+        """When ``reindex_doc`` raises, the tool returns -32603.
 
         The ``file_metadata`` entry for the just-written path is deleted.
         """
@@ -452,9 +621,21 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
 
         server_mod._ROOT_DIR = self.root_dir
 
+        # Pre-seed the row for the path about to be written so the cleanup
+        # assertion below cannot pass vacuously.
+        db_path = Path(self.root_dir) / "wywy_docs" / "docs_index.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            "INSERT OR REPLACE INTO file_metadata(path, mtime) VALUES (?, ?)",
+            ("docs/fail-test.mdx", 1_700_000_000_000_000_000),
+        )
+        conn.commit()
+        conn.close()
+        verify_metadata(self.root_dir, "docs/fail-test.mdx", present=True)
+
         with patch(
-            "wywy_docs.server.build_index",
-            side_effect=RuntimeError("Indexing failed"),
+            "wywy_docs.server.reindex_doc",
+            side_effect=RuntimeError("boom"),
         ):
             with pytest.raises(RuntimeError) as ctx:
                 server_mod.write_doc(
@@ -463,7 +644,7 @@ class TestWriteDocToolIndexFailure(unittest.TestCase):
                     content="# Failed indexing",
                     frontmatter={"title": "Fail Test"},
                 )
-            assert "file written but index update failed" in str(ctx.value)
+            assert str(ctx.value) == "file written but index update failed: boom"
 
         # The file_metadata entry for the new path must have been removed.
         verify_metadata(self.root_dir, "docs/fail-test.mdx", present=False)

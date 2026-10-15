@@ -21,8 +21,7 @@ Manual dev run (no service):
 uv run wywy-docs-serve --port 2530
 ```
 
-The index is built incrementally at server startup (unchanged files are
-skipped by mtime). Force a full rebuild from the repo root:
+Although the index is meant to be self-healing, you can force a full rebuild from the repo root:
 
 ```sh
 rm "$PWD/wywy_docs/docs_index.db"
@@ -31,10 +30,15 @@ systemctl --user restart wywy-docs-mcp
 
 ## MCP tools
 
+### get_doc
+
+Reads a document by `path` (string, relative to the Wywy-Docs root directory) directly from disk, returning its content and frontmatter.
+If the path does not end in `.mdx`, `.mdx` is appended.
+
 ### delete_doc
 
 Deletes a document by `path` (string, relative to the Wywy-Docs root directory).
-If the path has no extension, `.mdx` is automatically appended.
+If the path does not end in `.mdx`, `.mdx` is appended.
 
 Returns:
 

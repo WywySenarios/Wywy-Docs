@@ -1022,8 +1022,13 @@ class TestGetDocTool(unittest.TestCase):
         assert "Test Doc" in body_text
         assert "Full body content here" in body_text
 
-    def test_get_doc_invalid_path_returns_error(self) -> None:
-        """Invalid path returns JSON-RPC error -32602."""
+    def test_get_doc_missing_document_returns_custom_code(self) -> None:
+        """A missing document returns the custom ``DOCUMENT_NOT_FOUND`` code.
+
+        The message names the path and states the stale index entry was removed.
+        """
+        from wywy_docs.server import DOCUMENT_NOT_FOUND
+
         resp = self.client.send_message(
             {
                 "jsonrpc": "2.0",
@@ -1036,8 +1041,27 @@ class TestGetDocTool(unittest.TestCase):
             },
         )
         assert "error" in resp
+        assert resp["error"]["code"] == DOCUMENT_NOT_FOUND
+        assert (
+            resp["error"]["message"]
+            == "document not found: nonexistent.mdx; its index entry was removed"
+        )
+
+    def test_get_doc_path_traversal_returns_invalid_params(self) -> None:
+        """A path containing ``..`` still returns JSON-RPC -32602."""
+        resp = self.client.send_message(
+            {
+                "jsonrpc": "2.0",
+                "id": 22,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_doc",
+                    "arguments": {"path": "../outside/x.mdx"},
+                },
+            },
+        )
+        assert "error" in resp
         assert resp["error"]["code"] == INVALID_PARAMS
-        assert "document not found" in resp["error"]["message"]
 
 
 class TestAutoBuildIndex(unittest.TestCase):

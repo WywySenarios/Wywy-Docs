@@ -12,6 +12,7 @@ import logging
 import os
 import sqlite3
 import tempfile
+import threading
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -30,14 +31,27 @@ from mcp.types import (
     TextContent,
 )
 
-from wywy_docs.indexer import build_index, parse_file
+from wywy_docs.indexer import (
+    build_index,
+    doc_mtime,
+    parse_file,
+    reindex_doc,
+    remove_doc,
+)
 from wywy_docs.models import DocFrontmatter, Section
 
 logger = logging.getLogger(__name__)
 
+
 # ── Globals ───────────────────────────────────────────────────────────
 
 _ROOT_DIR: str = ""
+
+# Serialises index mutations (write reindex, read reconciliation, delete
+# cleanup) within this process.  Only the server wrappers acquire it; the
+# indexer functions never do, so there is exactly one lock owner and no nested
+# acquisition.
+_INDEX_LOCK = threading.Lock()
 
 mcp = FastMCP("wywy-docs", message_path="/messages/")
 
@@ -73,6 +87,43 @@ def _ensure_index(root_dir: str) -> None:
     if not Path(internal_dir).is_dir():
         logger.warning("internal directory does not exist: %s", internal_dir)
     build_index(root_dirs=[docs_dir, internal_dir], db_path=db)
+
+
+def _reconcile_doc(rel_path: str, abs_path: str) -> None:
+    """Re-index *rel_path* when its on-disk mtime differs from the index.
+
+    A manual edit bypasses the server, so the index keeps stale content until
+    the document is read back.  A path with no metadata row, or one whose
+    recorded mtime differs from the file's, is re-indexed; a match performs no
+    write.  The comparison and any rewrite run under ``_INDEX_LOCK``.
+
+    Args:
+        rel_path: Index key for the document, relative to the root.
+        abs_path: Absolute path to the on-disk file.
+
+    Raises:
+        RuntimeError: If the re-index fails (fail-closed).
+
+    """
+    mtime = Path(abs_path).stat().st_mtime_ns
+    db_path = _db_path()
+    try:
+        with _INDEX_LOCK:
+            # Keep the comparison and the rewrite in one acquisition so two
+            # concurrent readers cannot both rewrite a stale document.
+            if doc_mtime(db_path, rel_path) == mtime:
+                return
+            reindex_doc(
+                root=_ROOT_DIR,
+                db_path=db_path,
+                abs_path=abs_path,
+                rel_path=rel_path,
+            )
+    except Exception as e:
+        # Fail-closed: a stale read must not be served as if it were current.
+        logger.exception("Index reconciliation failed for %s", rel_path)
+        msg = f"index reconciliation failed: {e}"
+        raise RuntimeError(msg) from e
 
 
 # ── Path helpers ────────────────────────────────────────────────────────
@@ -210,22 +261,34 @@ def _delete_metadata_after_failed_index(db_path: str, rel_path: str) -> None:
         )
 
 
-def _reindex_after_write(section: str, path: str) -> None:
-    """Rebuild the FTS5 index; on failure clean up metadata and re-raise.
+def _reindex_after_write(rel_path: str, abs_path: str) -> None:
+    """Re-index the written document; on failure clean up metadata and re-raise.
+
+    Only the written document is re-indexed, so an unrelated file changed on
+    disk outside the tool keeps its existing index rows.
+
+    Args:
+        rel_path: Index key for the document, relative to the root.
+        abs_path: Absolute path to the just-written file.
 
     Raises:
         RuntimeError: If the re-index fails (the file is already written).
 
     """
     db_path = _db_path()
-    docs_dir, internal_dir = _section_dirs(_ROOT_DIR)
     try:
-        build_index(root_dirs=[docs_dir, internal_dir], db_path=db_path)
+        with _INDEX_LOCK:
+            reindex_doc(
+                root=_ROOT_DIR,
+                db_path=db_path,
+                abs_path=abs_path,
+                rel_path=rel_path,
+            )
     except Exception as e:
         # Any re-index failure must still clean up and report; `from e`
         # keeps the original error visible.
         logger.exception("Index update failed after write")
-        _delete_metadata_after_failed_index(db_path, f"{section}/{path}")
+        _delete_metadata_after_failed_index(db_path, rel_path)
         msg = f"file written but index update failed: {e}"
         raise RuntimeError(msg) from e
 
@@ -296,8 +359,24 @@ def get_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
     path = _normalize_doc_path(path)
     abs_path = str(Path(_ROOT_DIR) / path)
     if not Path(abs_path).is_file():
-        msg = "document not found"
-        raise ValueError(msg)
+        # The vanished file leaves stale rows behind; drop them so search stops
+        # surfacing the path.  Best-effort: a cleanup failure is logged, never
+        # surfaced, so it cannot mask the not-found result.
+        with _INDEX_LOCK:
+            try:
+                remove_doc(_db_path(), path)
+            except sqlite3.Error:
+                logger.debug(
+                    "Failed to remove stale index entry for %s",
+                    path,
+                    exc_info=True,
+                )
+        msg = f"document not found: {path}; its index entry was removed"
+        raise DocNotFoundError(msg)
+    # Only paths the indexer records (`docs/`, `internal/`) are reconciled;
+    # a section-less path is read straight from disk with no index side effect.
+    if path.startswith(("docs/", "internal/")):
+        _reconcile_doc(path, abs_path)
     parsed = parse_file(abs_path, root=_ROOT_DIR)
     return json.dumps(
         {"content": parsed["content"], "frontmatter": parsed["frontmatter"]},
@@ -362,9 +441,10 @@ def write_doc(  # type: ignore[no-untyped-def]  # noqa: ANN201
     )
     full_content = f"---\n{fm_yaml}---\n\n{content}"
     _atomic_write(abs_path, full_content)
-    _reindex_after_write(section, path)
+    rel_path = f"{section}/{path}"
+    _reindex_after_write(rel_path, abs_path)
 
-    return json.dumps({"path": f"{section}/{path}"})
+    return json.dumps({"path": rel_path})
 
 
 @mcp.tool()
@@ -403,30 +483,50 @@ def delete_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
     rel_path = f"{section}/{path}"
     db = _db_path()
     conn: sqlite3.Connection | None = None
-    try:
-        conn = sqlite3.connect(db)
-        conn.execute("DELETE FROM docs_fts WHERE path = ?", (rel_path,))
-        conn.execute("DELETE FROM file_metadata WHERE path = ?", (rel_path,))
-        conn.commit()
-    except sqlite3.OperationalError as e:
-        raise RuntimeError(str(e)) from e
-    finally:
-        if conn is not None:
-            conn.close()
+    with _INDEX_LOCK:
+        try:
+            conn = sqlite3.connect(db)
+            conn.execute("DELETE FROM docs_fts WHERE path = ?", (rel_path,))
+            conn.execute("DELETE FROM file_metadata WHERE path = ?", (rel_path,))
+            conn.commit()
+        except sqlite3.OperationalError as e:
+            raise RuntimeError(str(e)) from e
+        finally:
+            if conn is not None:
+                conn.close()
 
     return json.dumps({"path": rel_path, "deleted": True})
 
 
+# ── Errors ────────────────────────────────────────────────────────────
+
+
+class DocNotFoundError(Exception):
+    """Signal that a requested document has no file on disk.
+
+    Deliberately not a ``ValueError`` or ``RuntimeError``: a missing document
+    is a distinct outcome from invalid input or an internal failure, so the
+    call-tool handler maps it to its own JSON-RPC error code.
+    """
+
+
+# Server-defined JSON-RPC error code for a missing document.  ``-32001`` sits
+# in the implementation-defined server-error range, outside the standard
+# ``-32602`` (invalid params) and ``-32603`` (internal error) codes.
+DOCUMENT_NOT_FOUND = -32001
+
+
 # ── Custom call-tool handler ──────────────────────────────────────────
 # FastMCP returns tool errors as CallToolResult(isError=True), but the tests
-# expect JSON-RPC error responses (with "error" key) using specific codes:
-#   ValueError  → -32602 (INVALID_PARAMS)
-#   RuntimeError → -32603 (INTERNAL_ERROR)
-# We override the handler to raise McpError, which produces JSON-RPC errors.
+# expect JSON-RPC error responses (with an "error" key).  We override the
+# handler to raise McpError, matching these types in order:
+#   DocNotFoundError → -32001 (DOCUMENT_NOT_FOUND)
+#   ValueError       → -32602 (INVALID_PARAMS)
+#   RuntimeError     → -32603 (INTERNAL_ERROR)
 
 
 async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
-    """Handle CallToolRequest, converting ValueError/RuntimeError to McpError."""
+    """Handle CallToolRequest, converting tool errors to McpError."""
     tool_name = req.params.name
     arguments = req.params.arguments or {}
 
@@ -434,6 +534,10 @@ async def _call_tool_handler(req: CallToolRequest) -> ServerResult:
         result = await mcp.call_tool(tool_name, arguments)
     except ToolError as e:
         cause = e.__cause__
+        if isinstance(cause, DocNotFoundError):
+            raise McpError(
+                ErrorData(code=DOCUMENT_NOT_FOUND, message=str(cause)),
+            ) from cause
         if isinstance(cause, ValueError):
             raise McpError(
                 ErrorData(code=INVALID_PARAMS, message=str(cause)),

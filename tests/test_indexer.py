@@ -386,5 +386,284 @@ class TestCliEntryPoint(unittest.TestCase):
             assert count == 1
 
 
+# ===========================================================================
+# Per-document index primitives (reindex_doc / remove_doc / doc_mtime)
+# ===========================================================================
+
+
+class TestReindexDoc(unittest.TestCase):
+    """``reindex_doc()`` replaces exactly one path's index rows."""
+
+    def test_reindex_doc_updates_only_target_path(self) -> None:
+        """Re-indexing one path rewrites it and leaves the other path alone.
+
+        Assertions:
+        - the target path's ``docs_fts`` content equals the rewritten body
+        - the target path's ``file_metadata.mtime`` equals ``st_mtime_ns``
+        - the unrelated path's content and mtime are byte-for-byte unchanged
+        - exactly two ``docs_fts`` rows remain.
+        """
+        from wywy_docs.indexer import reindex_doc
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a_path = _create_file(
+                tmpdir,
+                "docs/a.mdx",
+                "---\ntitle: A\n---\nOriginal A body",
+            )
+            _create_file(
+                tmpdir,
+                "docs/b.mdx",
+                "---\ntitle: B\n---\nOriginal B body",
+            )
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
+
+            conn = sqlite3.connect(db_path)
+            a_mtime_before = conn.execute(
+                "SELECT mtime FROM file_metadata WHERE path = ?",
+                ("docs/a.mdx",),
+            ).fetchone()[0]
+            b_content_before = conn.execute(
+                "SELECT content FROM docs_fts WHERE path = ?",
+                ("docs/b.mdx",),
+            ).fetchone()[0]
+            b_mtime_before = conn.execute(
+                "SELECT mtime FROM file_metadata WHERE path = ?",
+                ("docs/b.mdx",),
+            ).fetchone()[0]
+            conn.close()
+
+            # Rewrite a.mdx and force a distinct mtime so the change is real.
+            with Path(a_path).open("w") as f:
+                f.write("---\ntitle: A\n---\nRewritten A body")
+            forced_mtime = a_mtime_before + 5_000_000_000
+            os.utime(a_path, ns=(forced_mtime, forced_mtime))
+            expected_a_mtime = Path(a_path).stat().st_mtime_ns
+            assert expected_a_mtime != a_mtime_before
+
+            reindex_doc(tmpdir, str(db_path), a_path, "docs/a.mdx")
+
+            conn = sqlite3.connect(db_path)
+            a_content = conn.execute(
+                "SELECT content FROM docs_fts WHERE path = ?",
+                ("docs/a.mdx",),
+            ).fetchone()[0]
+            a_mtime = conn.execute(
+                "SELECT mtime FROM file_metadata WHERE path = ?",
+                ("docs/a.mdx",),
+            ).fetchone()[0]
+            b_content_after = conn.execute(
+                "SELECT content FROM docs_fts WHERE path = ?",
+                ("docs/b.mdx",),
+            ).fetchone()[0]
+            b_mtime_after = conn.execute(
+                "SELECT mtime FROM file_metadata WHERE path = ?",
+                ("docs/b.mdx",),
+            ).fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
+            conn.close()
+
+            assert a_content == "Rewritten A body"
+            assert a_mtime == expected_a_mtime
+            assert b_content_after == b_content_before
+            assert b_mtime_after == b_mtime_before
+            assert total == 2  # noqa: PLR2004 - fixture count
+
+    def test_reindex_doc_inserts_new_path(self) -> None:
+        """Re-indexing a path with no prior entry inserts a fresh row.
+
+        The new body becomes findable via ``docs_fts MATCH`` and
+        ``file_metadata`` gains the path with its ``st_mtime_ns``.
+        """
+        from wywy_docs.indexer import reindex_doc
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_file(
+                tmpdir,
+                "docs/existing.mdx",
+                "---\ntitle: Existing\n---\nexisting body",
+            )
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
+
+            new_path = _create_file(
+                tmpdir,
+                "docs/new.mdx",
+                "---\ntitle: New\n---\nbrandnewtoken body",
+            )
+            expected_mtime = Path(new_path).stat().st_mtime_ns
+
+            reindex_doc(tmpdir, str(db_path), new_path, "docs/new.mdx")
+
+            conn = sqlite3.connect(db_path)
+            matches = conn.execute(
+                "SELECT path FROM docs_fts WHERE docs_fts MATCH 'brandnewtoken'",
+            ).fetchall()
+            meta = conn.execute(
+                "SELECT path, mtime FROM file_metadata WHERE path = ?",
+                ("docs/new.mdx",),
+            ).fetchone()
+            conn.close()
+
+            assert [row[0] for row in matches] == ["docs/new.mdx"]
+            assert meta == ("docs/new.mdx", expected_mtime)
+
+
+class TestRemoveDoc(unittest.TestCase):
+    """``remove_doc()`` deletes a path's rows idempotently."""
+
+    def test_remove_doc_deletes_both_rows_and_is_idempotent(self) -> None:
+        """Removing an indexed path clears both tables; second call is a no-op."""
+        from wywy_docs.indexer import remove_doc
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            _create_file(
+                tmpdir,
+                "docs/gone.mdx",
+                "---\ntitle: Gone\n---\ngone body",
+            )
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
+
+            remove_doc(str(db_path), "docs/gone.mdx")
+
+            conn = sqlite3.connect(db_path)
+            fts_count = conn.execute(
+                "SELECT COUNT(*) FROM docs_fts WHERE path = ?",
+                ("docs/gone.mdx",),
+            ).fetchone()[0]
+            meta_count = conn.execute(
+                "SELECT COUNT(*) FROM file_metadata WHERE path = ?",
+                ("docs/gone.mdx",),
+            ).fetchone()[0]
+            conn.close()
+
+            assert fts_count == 0
+            assert meta_count == 0
+
+            # Idempotent: removing again must not raise.
+            remove_doc(str(db_path), "docs/gone.mdx")
+
+
+class TestDocMtime(unittest.TestCase):
+    """``doc_mtime()`` reports the recorded mtime for a path."""
+
+    def test_doc_mtime_returns_recorded_or_none(self) -> None:
+        """Known path yields its ``st_mtime_ns``; unknown path yields ``None``."""
+        from wywy_docs.indexer import doc_mtime
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fp = _create_file(
+                tmpdir,
+                "docs/a.mdx",
+                "---\ntitle: A\n---\nbody",
+            )
+            db_path = Path(tmpdir) / "test.db"
+            build_index(
+                root_dirs=[str(Path(tmpdir) / "docs")],
+                db_path=str(db_path),
+            )
+
+            expected = Path(fp).stat().st_mtime_ns
+            assert doc_mtime(str(db_path), "docs/a.mdx") == expected
+            assert doc_mtime(str(db_path), "docs/unknown.mdx") is None
+
+
+class TestBuildIndexPrune(unittest.TestCase):
+    """``build_index()`` prunes rows whose paths vanished from the scan."""
+
+    def test_build_index_prunes_deleted_paths(self) -> None:
+        """A file deleted from disk is removed from both tables on rebuild."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            a_path = _create_file(
+                tmpdir,
+                "docs/a.mdx",
+                "---\ntitle: A\n---\ncontent A",
+            )
+            _create_file(
+                tmpdir,
+                "docs/b.mdx",
+                "---\ntitle: B\n---\ncontent B",
+            )
+            root_dirs = [str(Path(tmpdir) / "docs")]
+            db_path = Path(tmpdir) / "test.db"
+            build_index(root_dirs=root_dirs, db_path=str(db_path))
+
+            Path(a_path).unlink()
+            build_index(root_dirs=root_dirs, db_path=str(db_path))
+
+            conn = sqlite3.connect(db_path)
+            fts_paths = {
+                row[0] for row in conn.execute("SELECT path FROM docs_fts").fetchall()
+            }
+            meta_paths = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT path FROM file_metadata",
+                ).fetchall()
+            }
+            conn.close()
+
+            assert "docs/a.mdx" not in fts_paths
+            assert "docs/a.mdx" not in meta_paths
+            assert "docs/b.mdx" in fts_paths
+            assert "docs/b.mdx" in meta_paths
+
+    def test_build_index_skips_prune_when_root_missing(self) -> None:
+        """A missing scanned root dir must not erase that section's rows.
+
+        With ``internal/`` removed, a rebuild over ``docs/`` and ``internal/``
+        leaves the previously indexed ``internal/`` rows intact.
+        """
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            docs_dir = Path(tmpdir) / "docs"
+            internal_dir = Path(tmpdir) / "internal"
+            _create_file(
+                tmpdir,
+                "docs/only.mdx",
+                "---\ntitle: Only\n---\nonly body",
+            )
+            _create_file(
+                tmpdir,
+                "internal/gone.mdx",
+                "---\ntitle: Gone\n---\ngone body",
+            )
+            root_dirs = [str(docs_dir), str(internal_dir)]
+            db_path = Path(tmpdir) / "test.db"
+            build_index(root_dirs=root_dirs, db_path=str(db_path))
+
+            shutil.rmtree(internal_dir)
+            build_index(root_dirs=root_dirs, db_path=str(db_path))
+
+            conn = sqlite3.connect(db_path)
+            fts_paths = {
+                row[0] for row in conn.execute("SELECT path FROM docs_fts").fetchall()
+            }
+            meta_paths = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT path FROM file_metadata",
+                ).fetchall()
+            }
+            conn.close()
+
+            assert "internal/gone.mdx" in fts_paths
+            assert "internal/gone.mdx" in meta_paths
+            assert "docs/only.mdx" in fts_paths
+            assert "docs/only.mdx" in meta_paths
+
+
 if __name__ == "__main__":
     unittest.main()
