@@ -510,17 +510,15 @@ class DocNotFoundError(Exception):
     """
 
 
-# Server-defined JSON-RPC error code for a missing document.  ``-32001`` sits
-# in the implementation-defined server-error range, outside the standard
-# ``-32602`` (invalid params) and ``-32603`` (internal error) codes.
-DOCUMENT_NOT_FOUND = -32001
+# JSON-rpc error code
+DOCUMENT_NOT_FOUND = -32010
 
 
 # ── Custom call-tool handler ──────────────────────────────────────────
 # FastMCP returns tool errors as CallToolResult(isError=True), but the tests
 # expect JSON-RPC error responses (with an "error" key).  We override the
 # handler to raise McpError, matching these types in order:
-#   DocNotFoundError → -32001 (DOCUMENT_NOT_FOUND)
+#   DocNotFoundError → DOCUMENT_NOT_FOUND
 #   ValueError       → -32602 (INVALID_PARAMS)
 #   RuntimeError     → -32603 (INTERNAL_ERROR)
 
