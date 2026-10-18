@@ -1,0 +1,92 @@
+---
+title: Repo Documentation Conventions
+published: "2026-10-17T15:55:04"
+last_updated: "2026-10-17T19:03:20"
+---
+
+> The three documents every repository carries (`README.md`, `AGENTS.md`, and `CONTRIBUTING.md`) have disjoint audiences. This convention defines what each is for and the sections each should carry.
+
+## Root Level Documentation
+
+| File              | Audience                             | Role                                                  | Question it answers                  |
+| ----------------- | ------------------------------------ | ----------------------------------------------------- | ------------------------------------ |
+| `README.md`       | anyone — newcomer, operator, user    | the front door: what the project is and how to run it | "What is this, and how do I use it?" |
+| `CONTRIBUTING.md` | human contributors                   | how to set up, test, and submit a change              | "How do I work on this?"             |
+| `AGENTS.md`       | AI agents (and people auditing them) | operating rules an agent loads automatically          | "What rules must I not break?"       |
+
+The audiences are disjoint, and as a result every fact as exactly one home.
+
+### README.md
+
+The most-read document. It should let someone decide in under a minute whether the project is for them, and then use it without reading the source.
+
+Repo docs do not link to the convention docs. The sentence is the whole declaration — it records membership without a target that can be renamed, moved, or reworded, and without a list of links to keep current. A reader who needs the Wywy conventions knows where the docs live; the README does not have to point.
+
+**Highly suggested sections:**
+
+- A one-line Wywy membership notice — see _Wywy membership notice_ below.
+- Title and a one-line description of what the project is.
+- Requirements / prerequisites.
+- Install and basic usage.
+- Configuration — with examples, clearly labelled (see below).
+- Project status, if it is not obvious (stable, experimental, deprecated).
+
+Keep it lean. The README is the easiest document to bloat and the most expensive to read. If a section grows past a screen or two, move the detail out — into `docs/`, a guide, or the code — and let the README stop. Do not leave a stub that points elsewhere; a moved fact is moved, not referenced.
+
+#### Wywy membership notice
+
+A repository in the Wywy line states its membership once, in a short sentence near the top of its README:
+
+> This repo is part of the Wywy repo line and is subject to Wywy conventions.
+
+### AGENTS.md
+
+`AGENTS.md` is loaded automatically by an agent working in the repo, so it is read by a machine before it is read by a person. It should contain rules and invariants, not tutorials.
+
+**Highly suggested sections:**
+
+- **Testing** — how to run the suites, the mandate to run them before finishing, and the rule never to commit with `--no-verify`.
+- **Conventions** — invariants an edit must not break (dependency direction, security boundaries, resource ownership), phrased as short imperatives.
+
+Agent rules are operational. Anything a human contributor needs — setup steps, review etiquette — is not agent material; it belongs to `CONTRIBUTING.md` and does not appear here even as a pointer.
+
+### CONTRIBUTING.md
+
+The document a contributor reads before touching code. It is the single home for the mechanics of working in the repo.
+
+**Highly suggested sections:**
+
+- Repository layout — the top-level directories and what lives where.
+- Development setup.
+- Testing — how to run the tests, and the repo's single test entrypoint.
+- Conventions — the rules a contributor must follow.
+- Submitting changes — branch, commit, and review flow.
+
+## One fact, one file
+
+A fact is stated in exactly one of the three documents, and the other two are **silent** about it.
+
+The three files do not cross-reference each other — no "see `CONTRIBUTING.md`", no "more in `AGENTS.md`", no link to a section of another. A cross-reference is a second thing to maintain and a dangling reference the moment the target is renamed, moved, or reworded, so it costs more than the sentence it replaces.
+
+If a fact seems to belong in two files, the scopes overlap. Reassign it to the audience that needs it, or split it so each part has one home — do not settle for pointing.
+
+### Label examples as examples
+
+Configuration and commands shown in a README are almost always an _example_, not the deployed file. Say so, so a reader does not copy a value such as a fixed path or a personal directory as if it were universal. Use a lead-in like "Example configuration:", and avoid presenting an illustrative block under a bare real path.
+
+## Formatting
+
+- Markdown. One `#` title, then `##` sections. Reuse conventional section names (`Testing`, `Conventions`, `Layout`) so a reader knows where to look.
+- Prose paragraphs are a single long line. Do not wrap them manually (see [`documentation.mdx`](documentation.mdx)).
+- Fenced code blocks for commands, with the language set.
+- Tables for enumerable facts.
+- State whether each rule is a requirement or a suggestion; mixing the two erodes both.
+
+## Related conventions
+
+| Convention                                                                        | File                                     |
+| --------------------------------------------------------------------------------- | ---------------------------------------- |
+| Wywy-Docs authoring (`docs/` vs `internal/`, naming, frontmatter, prose wrapping) | [`documentation.mdx`](documentation.mdx) |
+| Agent prompt structure                                                            | [`agent-prompts.mdx`](agent-prompts.mdx) |
+| CI and test entrypoint                                                            | [`ci.mdx`](ci.mdx)                       |
+| Testing rules                                                                     | [`testing.mdx`](testing.mdx)             |
