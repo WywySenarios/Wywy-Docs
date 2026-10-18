@@ -1,6 +1,7 @@
 ---
 title: Go Conventions
-published: 2026-06-21T00:00:00
+published: "2026-06-21T00:00:00"
+last_updated: "2026-10-17T19:45:30"
 ---
 
 ## Go version
@@ -28,7 +29,9 @@ Use Go 1.23+. Start with the latest stable release for new projects. Existing `g
 - Prefer early returns over deeply nested `if err != nil` blocks.
 - Wrap errors with context using `fmt.Errorf("doing something: %w", err)`.
 - Use `errors.Is()` and `errors.As()` for sentinel and typed error matching. Define sentinel errors with `var ErrFoo = errors.New("foo failed")`.
+- Every module's errors MUST be matchable programmatically. Export them either as sentinel values (`var ErrFoo = errors.New(...)`, matched with `errors.Is()`) or as custom error types (matched with `errors.As()`). The choice is the author's — pick whichever suits the error. What is not acceptable is an unmatchable error: never force callers to match on error strings, and do not return ad-hoc inline errors that carry no exported identity.
 - Panic only for truly unrecoverable states (programmer bugs, invariant violations). Do not panic for expected errors (e.g., bad input, network failures).
+- Panic on impossible conditions. A branch the logic guarantees unreachable — such as the `default` of a `switch` over an enum-like type — must panic rather than return a placeholder value; a silent placeholder hides a real bug, while a panic fails loud and documents the invariant. Hold this line only while the value cannot originate from untrusted input: if a value can come from the wire, user input, or an unchecked conversion, validate it at the boundary and return an error instead — external input must never reach a panic.
 
 ```go
 // Good
@@ -39,6 +42,18 @@ if err != nil {
 
 // Avoid — silent discard without justification
 result, _ := doSomething()
+```
+
+```go
+// Good — the default is unreachable by construction, so a placeholder would hide a bug
+func (m Mode) String() string {
+    switch m {
+    case Read:
+        return "read"
+    default:
+        panic(fmt.Sprintf("policy: invalid Mode %d", int(m)))
+    }
+}
 ```
 
 ## Documentation comments
