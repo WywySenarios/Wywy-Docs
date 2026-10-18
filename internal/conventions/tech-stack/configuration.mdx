@@ -1,7 +1,7 @@
 ---
 title: Configuration Conventions
 published: "2026-06-05T00:00:00"
-last_updated: "2026-09-22T18:58:04"
+last_updated: "2026-10-17T01:43:49"
 ---
 
 > **Cross-cutting** — applies to all services regardless of language.
@@ -171,6 +171,15 @@ Committed template files (cloud-init snippets, `config/db/*`, `*.template`) mark
 
 ## YAML config
 
+### File extension
+
+New YAML files **MUST** use `.yaml`. `.yml` remains valid only where it already exists or where a tool forces it:
+
+- **Existing files keep their extension** — `config/config.yml`, `config/test_config.yml`, `docker/docker-compose.*.yml`, `.golangci.yml`. No renames.
+- **Tool-forced names** that only recognise `.yml` stay as the tool requires.
+
+Ansible, Ansible Lint, Docker Compose, and the YAML loaders we use all accept both extensions, so `.yml` is never a technical reason to avoid `.yaml` in a new file. Do not mix the two extensions for the same kind of file within a directory.
+
 ### Root config
 
 `config/config.yml` — site-wide configuration:
@@ -186,7 +195,7 @@ data:
     datatype: number
 ```
 
-- `.yml` extension (not `.yaml`).
+- Extension: `.yml` is kept because the file already exists; new YAML files use `.yaml`.
 - camelCase keys for human-readable config fields.
 - API-facing fields (db names, table names, column names) should use `lower_snake_case` (see [`naming.mdx`](../../naming.mdx)).
 
