@@ -8,6 +8,7 @@ pipeline {
 
   stages {
     stage('betterleaks') {
+      agent { label 'betterleaks' }
       steps {
         withChecks('betterleaks') {
           sh 'betterleaks git . --redact --no-banner --verbose'
