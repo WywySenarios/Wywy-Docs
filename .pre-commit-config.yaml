@@ -1,22 +1,14 @@
-# Pre-commit hooks — Wywy-Docs
-#
-# Per-commit hooks run on staged (diff) files only:
-#   - prettier (via npx) on docs/config
-#   - ruff check / ruff format on Python
-#   - mypy on Python
-#
-# Pre-push hooks run the same checks across the entire tree:
-#   pre-commit install --hook-type pre-push
-#
-# Tool config lives in pyproject.toml ([tool.ruff], [tool.mypy]) and
-# .prettierignore. All hooks are defined here; no external scripts.
-
 default_stages: [pre-commit]
 
 repos:
   - repo: local
     hooks:
       # --- staged (pre-commit) ---
+      - id: betterleaks
+        name: betterleaks (staged)
+        entry: betterleaks git . --staged --redact --no-banner
+        language: system
+        pass_filenames: false
       - id: ruff-check
         name: ruff check (staged)
         entry: uv run ruff check
@@ -40,6 +32,12 @@ repos:
         require_serial: true
 
       # --- full tree (pre-push) ---
+      - id: betterleaks-full
+        name: betterleaks (full history)
+        entry: betterleaks git . --redact --no-banner --verbose
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
       - id: ruff-check-full
         name: ruff check (full tree)
         entry: uv run ruff check
