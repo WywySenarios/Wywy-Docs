@@ -1,0 +1,172 @@
+---
+title: CI Conventions
+published: "2026-10-21T22:12:26"
+last_updated: "2026-10-23T02:04:51"
+---
+
+> **Language:** Bash for CI scripts.
+>
+> **Platform-specific rules:** Jenkins.
+
+## Platform
+
+Jenkins is Wywy's CI platform.
+
+Rules:
+
+- The pipeline definition is **wiring only** and does not contain logic: checkout, provision config, invoke repository scripts, publish results.
+- Checks live in repository scripts (`scripts/tests/**`, `scripts/install/**`) so they are runnable locally and are not trapped in Groovy.
+- Do not introduce a second CI platform. New checks go into the existing Jenkins pipeline.
+
+## Required checks
+
+Every pipeline **MUST** run these stages, in this order:
+
+1. **Secret scan**, betterleaks, before any repository test code runs.
+2. **Static checks**, formatter, linter, and type checker for each language the repository contains.
+3. **Tests**, the suite scripts listed in the `Jenkinsfile`.
+
+The order fails fast on leaked credentials, then on cheap static defects, before spending agent time on tests.
+
+A check that cannot run (missing config, missing credentials, unavailable agent) **MUST** fail the pipeline.
+Silently skipping a check produces a green build that proves nothing.
+
+## Test suites
+
+Every Wywy repository **MUST** organize its tests as executable suite scripts under `scripts/tests/**`, one script per suite.
+Each suite script starts with a shebang and is executable, so it can be invoked directly by path.
+A repo may have a single suite or several.
+
+```text
+scripts/tests/
+  smoke.sh
+  unit.sh
+  deployment.sh
+```
+
+Each suite script is a **first-class entrypoint** and is independently runnable. It contains everything needed to run that suite, including its own service lifecycle (see [Service lifecycle](#service-lifecycle)). A developer or CI job invokes the suite script directly:
+
+```bash
+scripts/tests/unit.sh
+```
+
+Direct invocation of test runners (`pytest`, `bats`, `valgrind`, `terraform test`, etc.) is **not permitted**. Run the suite script instead. This applies inside the pipeline definition too: the CI step invokes `scripts/tests/<suite>.sh` directly.
+
+Suites must be independent from each other.
+
+Suites must under no circumstance call another suite.
+
+A suite is expected to report as much information as it can in one run; it must not stop at its own first failing assertion or check.
+
+Each repository's `Jenkinsfile` names the suites that repository has; it must not discover them with a glob. A stage may call several suites. Call each script directly by path and let its exit code fail the stage. Do not wrap the calls in a loop that replaces the code with a generic value.
+
+## Pipeline wiring
+
+The tests stage calls the suite scripts named in the `Jenkinsfile`, one direct call per script. The first failing suite fails the stage, and its exit code is preserved. Suite selection and test flags belong in the suite scripts; the pipeline only orchestrates.
+
+The concrete Jenkins stage is defined in [`jenkins.mdx`](jenkins.mdx#tests-stage).
+
+Passing secrets to this step is governed by [Secrets and untrusted input](#secrets-and-untrusted-input).
+
+## Script hardening
+
+**Every suite script** under `scripts/tests/**` **MUST** be resilient against symlinks and callable from any working directory on the machine.
+
+### Symlink resolution
+
+Use `${BASH_SOURCE[0]}` (not `$0`) to resolve the script's own location. A suite script lives two levels below the repository root, so its root is two directories up:
+
+```bash
+# scripts/tests/<suite>.sh
+REPO_ROOT="$(readlink -f "$(dirname "${BASH_SOURCE[0]}")/../..")"
+```
+
+### Working directory independence
+
+`cd` to `REPO_ROOT` **immediately after computing it**, so all subsequent relative paths resolve against the repository root regardless of the caller's `$PWD`:
+
+```bash
+cd "$REPO_ROOT"
+```
+
+This ensures that tool-relative paths (e.g. `docker compose -f`) and local config/log paths resolve correctly regardless of the process CWD.
+
+### Relative paths from REPO_ROOT
+
+All paths in every suite script (tool file paths, config references, log directory references, paths to other scripts, etc.) **MUST** be relative to `REPO_ROOT`. Never use absolute paths.
+
+## Config provisioning
+
+Config files **MUST** be pre-staged before any suite is invoked. A suite script must not download or generate config at runtime.
+
+Rationale:
+
+- **Security**: The config is a trusted artifact; downloading it from a remote URL at test time introduces a network dependency and a supply-chain risk.
+- **Predictability**: A test run should give the same result regardless of network availability or upstream changes.
+- **Separation of concerns**: Provisioning is the responsibility of the CI runner (`ci.sh`) or the developer's setup, not the test entrypoints.
+
+Expected config path: `config/ci/config.yml` (relative to `REPO_ROOT`).
+
+In CI, the runner downloads and stages config before invoking a suite script. Locally, developers run `scripts/install/ci.sh` or equivalent provisioning steps.
+
+`config/ci/**` is a **committed fixture with dummy credentials only**. It exists so the suite boots without external secrets. Real credentials are never committed, and a suite that needs a real secret either provisions it through the CI credential mechanism or fails with a clear message.
+
+## Service lifecycle
+
+Each suite script is responsible for the lifecycle of any services **its own tests** need: start them, run the tests, tear them down. A suite script must not start or tear down another suite's services.
+
+Cleanup **MUST** happen on any exit path (success, failure, SIGINT, SIGTERM). Use a `trap` on `EXIT`.
+
+If service startup fails, the suite script **MUST** dump the service logs and exit non-zero, so CI can surface the failure reason without a separate log-collection step.
+
+The startup mechanism is **repo-specific**. Common patterns:
+
+**docker compose (service repos):**
+
+```bash
+COMPOSE="docker compose \
+  -f docker/docker-compose.base.yml \
+  -f docker/docker-compose.test.yml"
+```
+
+**KinD or similar (K8s control repos):** the suite script creates and deletes the throwaway cluster. Run the stage on the `kind` agent, which provides `kind` and `kubectl` (see [`jenkins.mdx`](jenkins.mdx#agent-labels-and-pools)).
+
+**No services (control/ops repos):** tests target pre-existing infrastructure (clusters, VMs); the suite scripts start nothing and have nothing to tear down.
+
+## Error handling
+
+Every suite script **MUST** use `set -euo pipefail` (standard bash convention).
+
+## Exit codes
+
+Each suite script **MUST** exit 0 if its suite passed and non-zero if it failed. The pipeline **MUST** preserve the exit code of the failing suite: do not loop with `|| status=1` and do not replace the code with a generic value. The first failing suite fails the stage.
+
+## Assertion style
+
+Test assertions are governed by the [Testing Conventions](../testing.mdx).
+
+## Secrets and untrusted input
+
+CI runs on infrastructure that holds registry credentials and can reach internal services. Treat every pipeline definition as a security boundary.
+
+- **No secrets in pipeline files.** Tokens, passwords, and keys come from the Jenkins credential store (`withCredentials`) and are passed through environment variables. Never place a secret in a `sh` command line, a repository variable, or a committed config file.
+- **Redact everything that prints.** Secret scanners run with redaction (`betterleaks --redact`) so a finding does not stream the secret into build logs. Do not `cat` credential files, render full environment dumps, or upload them as artifacts.
+- **Pin third-party code.** Jenkins plugins and agent images are pinned in Wywy-Website-Control; a repository does not install tooling from an unpinned URL at build time.
+- **Treat pull-request builds as untrusted.** Jenkins agents run the checked-out revision on Wywy infrastructure. Do not build fork pull requests from outside collaborators without an approval gate.
+- **Fail closed.** Missing credentials or config fail the run. There is no "continue without the check" path.
+
+## Artifacts and logs
+
+- Logs and artifacts **MUST NOT** contain secrets, tokens, PII, or decrypted config.
+- Upload artifacts only when they are needed to debug a failure. Prefer a short, redacted excerpt over the full environment.
+- Agents are ephemeral. Do not depend on a workspace surviving between builds, and clean it at the end of the job (`cleanWs()`).
+
+## Further Reading
+
+| Convention                         | File                                                                 |
+| ---------------------------------- | -------------------------------------------------------------------- |
+| Jenkins pipelines and agent labels | [`jenkins.mdx`](jenkins.mdx)                                         |
+| Testing conventions (assertions)   | [`../testing.mdx`](../testing.mdx)                                   |
+| Bash scripting                     | [`../languages/bash.mdx`](../languages/bash.mdx)                     |
+| Docker images and Compose layering | [`../tech-stack/docker-images.mdx`](../tech-stack/docker-images.mdx) |
+| Configuration files                | [`../tech-stack/configuration.mdx`](../tech-stack/configuration.mdx) |

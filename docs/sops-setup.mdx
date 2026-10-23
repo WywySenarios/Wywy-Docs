@@ -1,10 +1,21 @@
 ---
 title: SOPS + age Setup
 published: "2026-07-23T02:48:37+00:00"
-last_updated: "2026-08-10T02:42:17"
+last_updated: "2026-10-22T00:55:20"
 ---
 
 This guide walks through setting up [SOPS](https://github.com/getsops/sops) with the [age](https://age-encryption.org/) encryption backend to store secrets safely in this repository. Once configured, encrypted secrets can be committed to git and decrypted by ArgoCD via a Config Management Plugin during sync.
+
+## Secret layout
+
+Encrypted secrets live under `secrets/<environment>/`, using the same file name for the same secret in every environment.
+
+| Path              | Contents                                                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `secrets/dev/`    | Dev-cluster secrets: database and registry passwords, the internal CA, host and pod-network maps, and the Cloudflare API token. |
+| `secrets/shared/` | Secrets not tied to one cluster. `admin.txt.sops` is the admin password used across services.                                   |
+
+Secrets consumed by Argo CD live beside the manifests they belong to and carry a `.sops.yaml` suffix, for example `k8s/dev/jenkins/secrets/github-pat.sops.yaml`. For those files only the `data` and `stringData` fields are encrypted.
 
 ## 1. Install the age key generator
 
@@ -114,4 +125,4 @@ sops --decrypt secrets/admin.txt.sops > secrets/admin.txt
 
 ## 8. ArgoCD integration
 
-On the cluster, SOPS files are decrypted by the ArgoCD Config Management Plugin. See the [ArgoCD install script](../scripts/install/k8s/argocd.sh) — the SOPS CMP sidecar is configured there (once implemented).
+On the cluster, SOPS files are decrypted during sync by Argo CD's KSOPS integration. The repo-server setup lives in `scripts/install/k8s/argocd.sh` and `scripts/install/k8s/values/argocd.yaml`; the age private key is stored only as the `argocd-age-key` Secret in the `argocd` namespace.

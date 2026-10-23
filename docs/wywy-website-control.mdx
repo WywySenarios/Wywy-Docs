@@ -1,34 +1,29 @@
 ---
 title: Website Control
-published: 2026-03-04T00:07:19
+published: "2026-03-04T00:07:19"
+last_updated: "2026-10-22T00:55:29"
 ---
 
 ## Wywy-Website-Control Repository
 
-This repo contains all of the configuration and documentation for the entire website. It does not include blog content or database data.
+This repo contains the provisioning, cluster manifests, CI images, configuration, and documentation for the entire website. It does not include blog content or database data. The services themselves live in their own repositories.
 
-## Control Commands
+All commands run from `/etc/Wywy-Website-Control/`.
 
-All commands must be run from `/etc/Wywy-Website-Control/`.
+## Entry points
 
-| What              | Command                                  |
-| ----------------- | ---------------------------------------- |
-| Dev server        | `./run.sh website dev`                   |
-| Prod deploy       | `./run.sh website prod`                  |
-| Electron build    | `./run.sh website prod electron`         |
-| Enter container   | `./enter.sh website <alias> <dev\|prod>` |
-| Pull all services | `./pull.sh`                              |
-| Purge (dev only)  | `./purge.sh`                             |
+| What                  | Command                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| Ansible toolchain     | `scripts/install/ansible.sh`                                                                       |
+| Run a playbook        | `uv run --directory ansible wywy-ansible --dev\|--prod <playbook>`                                 |
+| Proxmox installer ISO | `scripts/install/preseeds/proxmox/build-proxmox-iso.sh`                                            |
+| Cluster base          | `scripts/install/k8s/k8s-base.sh`                                                                  |
+| Platform components   | `scripts/install/k8s/<component>.sh` — `prometheus-stack`, `linkerd`, `keda`, `longhorn`, `argocd` |
+| CI runner images      | `scripts/install/github-runner/build.sh`, `scripts/install/github-runner/push-image.sh`            |
+| Deploy runners        | `scripts/install/k8s/github-runners.sh`                                                            |
+| Deployment tests      | `bats tests/`                                                                                      |
 
-## Scripts
+## Notes
 
-| Path relative to /etc/Wywy-Website-Control | Purpose                                                                                                                                              |
-| :----------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------- |
-| enter.sh                                   | Enter a docker container running on the current machine                                                                                              |
-| install.sh                                 | Install website services.                                                                                                                            |
-| pull.sh                                    | Pulls the most recent code available for all Wywy-Website related repositories on this machine. Also recursively initializes and updates submodules. |
-| purge.sh                                   | Kills and deletes all docker containers on the current machine.                                                                                      |
-| run.sh                                     | Run a website service in development mode. Pass in an argument specifying which service to run.                                                      |
-| scripts/run/\[service_name\].sh            | Run a specific website service. Pass in an argument specifying if it's production (prod) or development (dev).                                       |
-| scripts/install/\[service_name\].sh        | Install a website service on the current machine. Pass in an argument specifying which service to install.                                           |
-| gettimestamp.sh                            | Gets the current date. This should be used when writing documentation.                                                                               |
+- Installation is layered. `ansible/playbooks/` owns VM creation and service configuration.
+- Argo CD reconciles the Kubernetes manifests from `k8s/dev/infrastructure/app-of-apps.yaml`.

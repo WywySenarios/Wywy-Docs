@@ -1,0 +1,226 @@
+---
+title: Jenkins Conventions
+published: "2026-10-21T22:12:44"
+last_updated: "2026-10-23T02:04:51"
+---
+
+Jenkins is Wywy's CI platform. Every repository, stage, and check uses it; no other CI platform is in use. Platform rules are defined in [`ci.mdx`](ci.mdx#platform).
+
+The controller and agents run in Kubernetes under the `jenkins` namespace and are deployed from Wywy-Website-Control. That repository is the source of truth for the controller image, plugins, agent images, and agent templates.
+
+## Pipeline shape
+
+Every repository has a root `Jenkinsfile` using **declarative** pipeline syntax. Jenkins discovers it through a multibranch job; there is no separate job configuration per stage.
+
+```groovy
+pipeline {
+  agent { label 'generic' }
+
+  options {
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '30'))
+  }
+
+  stages {
+    stage('betterleaks') {
+      agent { label 'betterleaks' }
+      steps {
+        withChecks('betterleaks') {
+          sh 'betterleaks git . --redact --no-banner --verbose'
+        }
+      }
+    }
+
+    stage('tests') {
+      steps {
+        withChecks('tests') {
+          sh 'scripts/tests/smoke.sh'
+          sh 'scripts/tests/unit.sh'
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      cleanWs()
+    }
+  }
+}
+```
+
+Required scaffold:
+
+| Element                         | Rule                                                                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Top-level `agent`               | `agent { label 'generic' }` — never `agent any`; an explicit label guarantees the agent has the tools the pipeline needs |
+| `disableConcurrentBuilds`       | One build per branch at a time                                                                                           |
+| `buildDiscarder`                | `logRotator(numToKeepStr: '30')`                                                                                         |
+| `post { always { cleanWs() } }` | Agents are ephemeral and the workspace must not leak between builds                                                      |
+
+## Stages and checks
+
+- Stage names are **lower-kebab-case** and describe one concern (`betterleaks`, `tests`, `ansible-code-check`).
+- Every stage body is wrapped in `withChecks('<stage>')`. The Checks API plugin publishes the stage as a GitHub check, and GitHub identifies a check by its name. Renaming a stage changes the check name.
+- Stage names are an external contract. Branch protection and reviewers rely on them, so do not rename a stage without updating the GitHub configuration in the same change.
+- A stage that fails **MUST** fail the build. Do not end a command with `|| true`, and do not wrap a required check in `catchError` that leaves the build green. If a check is advisory, give it its own stage and say so in the stage name.
+- Stages run sequentially in the same workspace. Do not run stages in `parallel` unless each branch uses a distinct `dir()` workspace, because concurrent stages share the checkout and tool caches.
+- The `steps` block stays thin: checkout is implicit, config provisioning and test logic live in repository scripts.
+
+## Agent labels and pools
+
+Agent templates are declared in Wywy-Website-Control at `k8s/base/jenkins/jenkins.yaml`. Each label is a **capability pool**: a stage selects exactly one label, and the pool provides exactly the tools that image carries — nothing else. Choose the narrowest pool that satisfies the stage.
+
+| Label         | Provides                                                    | Use for                                                |
+| ------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
+| `generic`     | Base toolchain (git, Docker CLI, common utilities)          | Default for checkout, scripts, and general stages      |
+| `dind`        | Docker daemon inside the agent (Docker-in-Docker)           | `docker compose` and multi-container integration tests |
+| `kind`        | `kind` and `kubectl`                                        | Throwaway KinD clusters and manifest tests             |
+| `uv`          | `uv` sidecar container                                      | Python dependency resolution and tooling               |
+| `betterleaks` | betterleaks only, no Docker daemon, tighter CPU/memory caps | Secret scanning                                        |
+
+Rules:
+
+- Request the **narrowest** label that provides the tools the stage needs. Do not run Docker, KinD, or secret scanning on `generic` just because the binary happens to be present.
+- Do not invent a label. A label that no template declares matches nothing, and the stage waits for an agent that never appears.
+- Do not assume agent state: no home-directory caches, no persisted Docker volumes, no files outside `WORKSPACE`.
+- Adding an agent label is a control-repo change with three parts: a template in `k8s/base/jenkins/jenkins.yaml`, an image under `docker/jenkins-agent-<capability>/`, and a build/push entry in `ansible/playbooks/jenkins/images.yaml`. Document the new label in the table above before repositories use it.
+
+### Dedicated agents for security tooling
+
+Tools that scan source code run on their **own** agent label (`betterleaks`). The dedicated image is version-pinned and checksum-verified at build time, has no Docker daemon, and is capped independently of `generic`. Do not add scanners to the general-purpose agent and do not give a scanner stage Docker or cluster access it does not need.
+
+## Toolchain and images
+
+- Tools used by most builds belong in the agent image, pinned to an exact version. Do not download `latest` in a `Jenkinsfile` or install a tool on every build.
+- Repository-specific tooling may be bootstrapped by a version-pinned installer script under `scripts/install/**` (for example `scripts/install/ansible.sh`). The installer is idempotent and runs from `REPO_ROOT`.
+- Agent image tags, base agent version, and Jenkins plugin versions are pinned in Wywy-Website-Control. Bumping any of them is a control-repo change, not a repository-local edit.
+- Never `curl | bash` an unpinned URL from a `Jenkinsfile`.
+
+## Secret scanning
+
+Every Jenkins pipeline **MUST** run betterleaks before any repository test code executes.
+
+```groovy
+stage('betterleaks') {
+  agent { label 'betterleaks' }
+  steps {
+    withChecks('betterleaks') {
+      sh 'betterleaks git . --redact --no-banner --verbose'
+    }
+  }
+}
+```
+
+Rules:
+
+- `--redact` is mandatory. A finding must not print the secret into build logs.
+- `--no-banner` keeps logs machine-readable; `--verbose` is expected in CI.
+- Never append `|| true`. A finding fails the build.
+- Repositories with a betterleaks config pass it explicitly with `--config .betterleaks.toml`. The config is reviewed whenever betterleaks is upgraded, because filters and rule names change between versions.
+- False positives are suppressed in `.betterleaksignore` **by fingerprint**, not by path or rule. Every entry carries a comment explaining why it is safe. A blanket path or rule ignore is not acceptable.
+- Pre-commit and pre-push hooks run the same scanner with the same redaction settings: `--staged` for pre-commit, full history for pre-push. A developer sees the failure before CI does.
+- A real leak is not remediated by suppressing it. Rotate the credential, then purge it from history. Confidentially disclose all findings. Never share the secret value.
+
+## Tests stage
+
+The tests stage calls the suite scripts listed in the `Jenkinsfile`. Each call is direct; the first failing suite fails the stage with that suite's exit code:
+
+```groovy
+stage('tests') {
+  steps {
+    withChecks('tests') {
+      sh 'scripts/tests/smoke.sh'
+      sh 'scripts/tests/unit.sh'
+    }
+  }
+}
+```
+
+- Do not invoke `pytest`, `bats`, `mypy`, or any other runner directly from the `Jenkinsfile`. Suite scripts own invocation, environment, and service lifecycle (see [`ci.mdx`](ci.mdx)).
+- List the suites this repository has, by path, in the `Jenkinsfile`. Do not glob `scripts/tests/*.sh`: the `Jenkinsfile` is the declaration of which suites run. Adding or removing a suite is a `Jenkinsfile` change in the same commit.
+- Call each suite directly, one `sh` step per script. Do not wrap the calls in a loop that replaces the exit code with a generic value; the failing suite's code is the diagnostic.
+- A suite script starts with a shebang and is executable. Invoke it by path (`scripts/tests/unit.sh`), not through `bash`.
+- Suites run sequentially. The first failing suite fails the stage and later suites do not run; each suite is responsible for reporting its own failures in full.
+- A stage may call several suites. `withChecks` publishes one check per stage, so use separate stages when you want separate checks.
+- A repository with no suite scripts has nothing to test. Add a suite script under `scripts/tests/` before wiring the stage.
+
+## Credentials
+
+- Credentials come from the controller's credential store through `withCredentials`, bound to environment variables. Never interpolate a secret into a `sh` command line — Groovy interpolation is echoed in the build log.
+- Credential IDs are declared in the controller configuration in Wywy-Website-Control. Repositories reference them; they do not create Jenkins credentials.
+- Use the least-privilege credential. The controller's GitHub PAT permissions are listed below; do not add scopes for a single repository's convenience.
+
+### Controller credentials
+
+Kubernetes Secret manifests live under `k8s/dev/jenkins/secrets/` and render into the `jenkins` namespace. Ansible inputs live under `secrets/<environment>/`. Both are sops-encrypted.
+
+| Credential           | Source                                                                                      | Purpose                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| GitHub PAT           | `github-pat.sops.yaml` → `jenkins-github-pat`                                               | Clone repositories, discover pull requests, publish checks and commit statuses, manage hooks. |
+| Admin password       | `jenkins-admin.sops.yaml`                                                                   | Initial password for the controller's `admin` account.                                        |
+| Cloudflare API token | `secrets/dev/cloudflare.sops.yaml`, consumed by `ansible/playbooks/jenkins/cloudflare.yaml` | Provision the Cloudflare tunnel and Access policy.                                            |
+
+#### GitHub PAT
+
+Create a fine-grained PAT. Grant repository access to every repository Jenkins builds, plus `wywy-config`, which Jenkins checks out as a submodule.
+
+| Repository permission | Access         | Why                                        |
+| --------------------- | -------------- | ------------------------------------------ |
+| Contents              | Read-only      | Clone, checkout, recursive submodules      |
+| Metadata              | Read-only      | Mandatory; GitHub selects it automatically |
+| Pull requests         | Read-only      | Multibranch pull-request discovery         |
+| Commit statuses       | Read and write | Branch-source and per-stage status checks  |
+| Checks                | Read and write | Checks API publication                     |
+| Webhooks              | Read and write | Repository hook management                 |
+
+If the organization enforces SAML/SSO, authorize the token for the organization. Set an expiry and rotate the token before it lapses; an expired PAT breaks every multibranch scan and status update.
+
+#### Cloudflare API token
+
+The token needs these permissions.
+
+Account permissions:
+
+- Cloudflare Tunnel: Edit
+- Access: Apps and Policies: Edit
+
+Zone permissions for the domain:
+
+- DNS: Edit
+
+Example contents:
+
+```yaml
+api_token: xxx
+account_id: xxx
+zone_id: xxx
+```
+
+The zone ID is visible in the domain's registration details in the Cloudflare dashboard. Pass the account email that Cloudflare Access should allow:
+
+```bash
+uv run --directory ansible wywy-ansible --dev playbooks/jenkins/cloudflare.yaml \
+  -e '{"cloudflare_access_allowed_emails": ["you@example.com"]}'
+```
+
+## Concurrency, retention, and workspace
+
+- `disableConcurrentBuilds()` serializes builds per branch. Do not remove it to make a slow pipeline faster; fix the pipeline or split the job.
+- Builds are retained for the last 30 runs per branch. Logs are not an archive.
+- `cleanWs()` runs on every exit path. The agent is destroyed afterwards, but the workspace is wiped first so a reused pod never sees the previous build.
+- Write only inside `WORKSPACE`. Any state a later stage needs is produced in the same stage or passed through `stash`/`unstash`.
+
+## Webhooks and check publication
+
+GitHub delivers push and pull-request events to the controller through the Cloudflare tunnel. The GitHub plugin manages the repository hooks from controller configuration (`manageHooks: true`); repositories do not add webhooks by hand.
+
+The `withChecks` step comes from the `checks-api` plugin, a dependency of the pinned `github-checks` plugin. Without them the build still runs, but GitHub check runs are not published and the pull request shows no per-stage result.
+
+## Related conventions
+
+| Convention                       | File                                             |
+| -------------------------------- | ------------------------------------------------ |
+| CI platform and test entrypoints | [`ci.mdx`](ci.mdx)                               |
+| Testing conventions (assertions) | [`../testing.mdx`](../testing.mdx)               |
+| Bash scripting                   | [`../languages/bash.mdx`](../languages/bash.mdx) |
