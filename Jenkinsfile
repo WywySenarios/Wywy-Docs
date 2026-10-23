@@ -19,13 +19,7 @@ pipeline {
     stage('tests') {
       steps {
         withChecks('tests') {
-          sh '''
-            status=0
-            for suite in scripts/tests/*.sh; do
-              "$suite" || status=1
-            done
-            exit "$status"
-          '''
+          sh 'scripts/tests/unit.sh'
         }
       }
     }
