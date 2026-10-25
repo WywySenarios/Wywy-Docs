@@ -1,7 +1,7 @@
 ---
 title: Repo Documentation Conventions
 published: "2026-10-17T15:55:04"
-last_updated: "2026-10-17T19:03:20"
+last_updated: "2026-10-25T11:47:18"
 ---
 
 > The three documents every repository carries (`README.md`, `AGENTS.md`, and `CONTRIBUTING.md`) have disjoint audiences. This convention defines what each is for and the sections each should carry.
@@ -24,18 +24,20 @@ Repo docs do not link to the convention docs. The sentence is the whole declarat
 
 **Highly suggested sections:**
 
-- A one-line Wywy membership notice — see _Wywy membership notice_ below.
+- A one-line Wywy membership notice (see _Wywy membership notice_ below).
 - Title and a one-line description of what the project is.
 - Requirements / prerequisites.
 - Install and basic usage.
-- Configuration — with examples, clearly labelled (see below).
+- Configuration with examples, clearly labelled (see below).
 - Project status, if it is not obvious (stable, experimental, deprecated).
 
 Keep it lean. The README is the easiest document to bloat and the most expensive to read. If a section grows past a screen or two, move the detail out — into `docs/`, a guide, or the code — and let the README stop. Do not leave a stub that points elsewhere; a moved fact is moved, not referenced.
 
+You are encouraged to make non-root level READMEs if there are details that are incredibly specific to certain parts of the repo.
+
 #### Wywy membership notice
 
-A repository in the Wywy line states its membership once, in a short sentence near the top of its README:
+A repository in the Wywy line states its membership once, in a short sentence near the top of its root level README:
 
 > This repo is part of the Wywy repo line and is subject to Wywy conventions.
 
