@@ -153,13 +153,13 @@ stage('tests') {
 
 ### Controller credentials
 
-Kubernetes Secret manifests live under `k8s/dev/jenkins/secrets/` and render into the `jenkins` namespace. Ansible inputs live under `secrets/<environment>/`. Both are sops-encrypted.
+Kubernetes Secret manifests live under `k8s/dev/jenkins/secrets/` and render into the `jenkins` namespace. Ansible-only inputs live in `ansible/inventory/<environment>/group_vars/*.sops.yaml` and are decrypted by the `community.sops` vars plugin; inputs shared with non-Ansible callers stay under `secrets/<environment>/`. All are sops-encrypted.
 
-| Credential           | Source                                                                                      | Purpose                                                                                       |
-| -------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| GitHub PAT           | `github-pat.sops.yaml` → `jenkins-github-pat`                                               | Clone repositories, discover pull requests, publish checks and commit statuses, manage hooks. |
-| Admin password       | `jenkins-admin.sops.yaml`                                                                   | Initial password for the controller's `admin` account.                                        |
-| Cloudflare API token | `secrets/dev/cloudflare.sops.yaml`, consumed by `ansible/playbooks/jenkins/cloudflare.yaml` | Provision the Cloudflare tunnel and Access policy.                                            |
+| Credential           | Source                                                                                                    | Purpose                                                                                       |
+| -------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| GitHub PAT           | `github-pat.sops.yaml` → `jenkins-github-pat`                                                             | Clone repositories, discover pull requests, publish checks and commit statuses, manage hooks. |
+| Admin password       | `jenkins-admin.sops.yaml`                                                                                 | Initial password for the controller's `admin` account.                                        |
+| Cloudflare API token | `ansible/inventory/dev/group_vars/all.sops.yaml`, consumed by `ansible/playbooks/jenkins/cloudflare.yaml` | Provision the Cloudflare tunnel and Access policy.                                            |
 
 #### GitHub PAT
 
@@ -192,9 +192,9 @@ Zone permissions for the domain:
 Example contents:
 
 ```yaml
-api_token: xxx
-account_id: xxx
-zone_id: xxx
+cloudflare_api_token: xxx
+cloudflare_account_id: xxx
+cloudflare_zone_id: xxx
 ```
 
 The zone ID is visible in the domain's registration details in the Cloudflare dashboard. Pass the account email that Cloudflare Access should allow:
