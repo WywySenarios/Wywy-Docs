@@ -1,7 +1,7 @@
 ---
 title: Jenkins Conventions
 published: "2026-10-21T22:12:44"
-last_updated: "2026-10-23T02:04:51"
+last_updated: "2026-10-30T20:42:06"
 ---
 
 Jenkins is Wywy's CI platform. Every repository, stage, and check uses it; no other CI platform is in use. Platform rules are defined in [`ci.mdx`](ci.mdx#platform).
@@ -75,7 +75,8 @@ Agent templates are declared in Wywy-Website-Control at `k8s/base/jenkins/jenkin
 | ------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
 | `generic`     | Base toolchain (git, Docker CLI, common utilities)          | Default for checkout, scripts, and general stages      |
 | `dind`        | Docker daemon inside the agent (Docker-in-Docker)           | `docker compose` and multi-container integration tests |
-| `kind`        | `kind` and `kubectl`                                        | Throwaway KinD clusters and manifest tests             |
+| `kind`        | `kind` and `kubectl`                                        | Throwaway KinD clusters                                |
+| `manifests`   | `kustomize`, `kubeconform`, `kube-linter`, `yamllint`       | Static Kubernetes manifest checks                      |
 | `uv`          | `uv` sidecar container                                      | Python dependency resolution and tooling               |
 | `betterleaks` | betterleaks only, no Docker daemon, tighter CPU/memory caps | Secret scanning                                        |
 
@@ -153,13 +154,13 @@ stage('tests') {
 
 ### Controller credentials
 
-Kubernetes Secret manifests live under `k8s/dev/jenkins/secrets/` and render into the `jenkins` namespace. Ansible-only inputs live in `ansible/inventory/<environment>/group_vars/*.sops.yaml` and are decrypted by the `community.sops` vars plugin; inputs shared with non-Ansible callers stay under `secrets/<environment>/`. All are sops-encrypted.
+Jenkins Kubernetes Secret manifests live under `k8s/dev/jenkins/secrets/` and render into the `jenkins` namespace. The tunnel token lives under `k8s/dev/cloudflared/jenkins/secrets/`. Ansible-only inputs live in `ansible/inventory/<environment>/group_vars/*.sops.yaml` and are decrypted by the `community.sops` vars plugin; inputs shared with non-Ansible callers stay under `secrets/<environment>/`. All are sops-encrypted.
 
 | Credential           | Source                                                                                                    | Purpose                                                                                       |
 | -------------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | GitHub PAT           | `github-pat.sops.yaml` → `jenkins-github-pat`                                                             | Clone repositories, discover pull requests, publish checks and commit statuses, manage hooks. |
 | Admin password       | `jenkins-admin.sops.yaml`                                                                                 | Initial password for the controller's `admin` account.                                        |
-| Cloudflare API token | `ansible/inventory/dev/group_vars/all.sops.yaml`, consumed by `ansible/playbooks/jenkins/cloudflare.yaml` | Provision the Cloudflare tunnel and Access policy.                                            |
+| Cloudflare API token | `ansible/inventory/dev/group_vars/all.sops.yaml`, consumed by `ansible/playbooks/cloudflare/tunnels.yaml` | Provision the Cloudflare tunnel.                                                              |
 
 #### GitHub PAT
 
