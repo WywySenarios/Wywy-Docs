@@ -1,7 +1,7 @@
 ---
 title: SOPS + age Setup
 published: "2026-07-23T02:48:37+00:00"
-last_updated: "2026-10-22T00:55:20"
+last_updated: "2026-10-24T17:02:39"
 ---
 
 This guide walks through setting up [SOPS](https://github.com/getsops/sops) with the [age](https://age-encryption.org/) encryption backend to store secrets safely in this repository. Once configured, encrypted secrets can be committed to git and decrypted by ArgoCD via a Config Management Plugin during sync.
@@ -10,10 +10,11 @@ This guide walks through setting up [SOPS](https://github.com/getsops/sops) with
 
 Encrypted secrets live under `secrets/<environment>/`, using the same file name for the same secret in every environment.
 
-| Path              | Contents                                                                                                                        |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `secrets/dev/`    | Dev-cluster secrets: database and registry passwords, the internal CA, host and pod-network maps, and the Cloudflare API token. |
-| `secrets/shared/` | Secrets not tied to one cluster. `admin.txt.sops` is the admin password used across services.                                   |
+| Path                                  | Contents                                                                                                                                              |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `secrets/dev/`                        | Dev-cluster secrets shared with non-Ansible callers: the internal CA, the `hosts.sops` map, and the database password the bats tests decrypt.         |
+| `secrets/shared/`                     | Secrets not tied to one cluster. `admin.txt.sops` is the admin password used across services.                                                         |
+| `ansible/inventory/<env>/group_vars/` | Ansible-only secrets, transparently decrypted by the `community.sops` vars plugin: the Cloudflare API token, the registry password, and the pod CIDR. |
 
 Secrets consumed by Argo CD live beside the manifests they belong to and carry a `.sops.yaml` suffix, for example `k8s/dev/jenkins/secrets/github-pat.sops.yaml`. For those files only the `data` and `stringData` fields are encrypted.
 
@@ -126,3 +127,27 @@ sops --decrypt secrets/admin.txt.sops > secrets/admin.txt
 ## 8. ArgoCD integration
 
 On the cluster, SOPS files are decrypted during sync by Argo CD's KSOPS integration. The repo-server setup lives in `scripts/install/k8s/argocd.sh` and `scripts/install/k8s/values/argocd.yaml`; the age private key is stored only as the `argocd-age-key` Secret in the `argocd` namespace.
+
+## 9. Ansible group vars
+
+Ansible-only secrets live in `ansible/inventory/<env>/group_vars/*.sops.yaml`.
+The `community.sops` vars plugin decrypts them during inventory parsing, so playbooks and roles consume ordinary Ansible variables and never call `sops` themselves.
+
+- `community.sops` is pinned in `ansible/requirements.yaml` and installed by `scripts/install/ansible.sh`.
+- The plugin is enabled in `ansible/ansible.cfg`: `vars_plugins_enabled = host_group_vars,community.sops.sops`
+- An unreadable store fails before any task runs.
+- Files use the `.sops.yaml` extension. The root `.sops.yaml` rule for `.*\.sops\.yaml$` already covers them.
+- Implicit `localhost` plays receive `group_vars/all.sops.yaml`
+- Keep `no_log: true` on any task that renders one of these values.
+
+A newly created store is encrypted with the same age recipient as the rest of the repository:
+
+```bash
+out="$(mktemp --suffix=.sops.yaml)"
+printf "registry_password: '%s'\n" "$(sops -d --output-type binary secrets/dev/registry-password.sops)" \
+  | sops -e --input-type yaml --output-type yaml \
+      --filename-override ansible/inventory/dev/group_vars/all.sops.yaml /dev/stdin > "$out"
+mv "$out" ansible/inventory/dev/group_vars/all.sops.yaml
+```
+
+That last form overwrites the whole store, so use it only for a file with a single value, or merge the existing keys first.
