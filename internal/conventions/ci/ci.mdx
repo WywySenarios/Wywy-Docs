@@ -1,7 +1,7 @@
 ---
 title: CI Conventions
 published: "2026-10-21T22:12:26"
-last_updated: "2026-10-23T02:04:51"
+last_updated: "2026-10-29T01:15:15"
 ---
 
 > **Language:** Bash for CI scripts.
@@ -57,6 +57,8 @@ Suites must be independent from each other.
 Suites must under no circumstance call another suite.
 
 A suite is expected to report as much information as it can in one run; it must not stop at its own first failing assertion or check.
+
+> **Tip:** If you find yourself trying to work around this rule, you should probably split the suite into multiple suites.
 
 Each repository's `Jenkinsfile` names the suites that repository has; it must not discover them with a glob. A stage may call several suites. Call each script directly by path and let its exit code fail the stage. Do not wrap the calls in a loop that replaces the code with a generic value.
 
@@ -166,6 +168,7 @@ CI runs on infrastructure that holds registry credentials and can reach internal
 | Convention                         | File                                                                 |
 | ---------------------------------- | -------------------------------------------------------------------- |
 | Jenkins pipelines and agent labels | [`jenkins.mdx`](jenkins.mdx)                                         |
+| Pre-commit and pre-push hooks      | [`pre-commit.mdx`](pre-commit.mdx)                                   |
 | Testing conventions (assertions)   | [`../testing.mdx`](../testing.mdx)                                   |
 | Bash scripting                     | [`../languages/bash.mdx`](../languages/bash.mdx)                     |
 | Docker images and Compose layering | [`../tech-stack/docker-images.mdx`](../tech-stack/docker-images.mdx) |
