@@ -1,7 +1,7 @@
 ---
 title: Hostname Convention
 published: "2026-10-17T02:54:03"
-last_updated: "2026-10-17T13:13:25"
+last_updated: "2026-10-30T18:47:01"
 ---
 
 **Cross-cutting** — applies to every service, script, manifest, and template that addresses a peer.
@@ -34,7 +34,7 @@ A hosts-format line is `<address> <name> [<alias>...]`.
 - **Field 2 is the canonical name** — the name every lookup is expected to work with, and the only field an ordered list is keyed on.
 - **Fields 3+ are aliases** of the same host, written _on the same line_.
 
-```
+```text
 xxx.xxx.xxx.xxx proxmox-1.internal
 xxx.xxx.xxx.xxx proxmox-2.internal
 xxx.xxx.xxx.xxx proxmox-3.internal db-node.internal
@@ -44,14 +44,14 @@ Aliases go on the same line **on purpose**. A separate line repeating the addres
 
 ## Where names live
 
-| File                                   | Contents                                                                                            | Resolvable on the dev machine / in-cluster? |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| `secrets/<env>/hosts.sops.yaml`        | single hosts — `db.internal`, `gateway.internal`, `dns.internal`                                    | **yes**                                     |
-| `secrets/<env>/proxmox-hosts.sops`     | ordered `proxmox-N.internal` members, with `db-node.internal` as an alias on the line it belongs to | no                                          |
-| `secrets/<env>/k8s-workers-hosts.sops` | ordered `k8s-worker-N.internal` members                                                             | no                                          |
-| `secrets/<env>/k8s-pod-cidr.sops`      | a single value (not a hosts file)                                                                   | n/a                                         |
+| File                                                 | Contents                                                                                            | Resolvable on the dev machine / in-cluster? |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `secrets/<env>/hosts.sops.yaml`                      | single hosts — `db.internal`, `gateway.internal`, `dns.internal`                                    | **yes**                                     |
+| `secrets/<env>/proxmox-hosts.sops`                   | ordered `proxmox-N.internal` members, with `db-node.internal` as an alias on the line it belongs to | no                                          |
+| `secrets/<env>/k8s-workers-hosts.sops`               | ordered `k8s-worker-N.internal` members                                                             | no                                          |
+| `ansible/inventory/<env>/group_vars/files.sops.yaml` | `wywy_pod_cidr`                                                                                     | n/a                                         |
 
-`hosts.sops.yaml` is consumed **whole** by the two resolvers (`resolve-hosts.sh` overlays it into the operator's `/etc/hosts`; `coredns-hosts.sh` renders it into the cluster's CoreDNS hosts block), so anything added to it becomes resolvable on the dev machine and inside the cluster. Infrastructure addresses — Proxmox nodes, the gateway — deliberately do **not** belong there.
+`hosts.sops.yaml` is consumed **whole** by the two resolvers (`resolve-hosts.sh` overlays it into the operator's `/etc/hosts`; the `k8s_network` Ansible role renders it into the cluster's CoreDNS hosts block), so anything added to it becomes resolvable on the dev machine and inside the cluster. Infrastructure addresses — Proxmox nodes, the gateway — deliberately do **not** belong there.
 
 ## File format
 
@@ -60,49 +60,50 @@ Aliases go on the same line **on purpose**. A separate line repeating the addres
 
 ## Resolution
 
-**Name → address** is one script, so that no caller re-implements the predicate and each outcome is a defined contract:
+**Name → address** is the `wywy_hosts` lookup plugin, so no caller re-implements the predicate and each outcome is a defined contract:
 
+```jinja
+lookup('wywy_hosts', '<file>', '<name>')
 ```
-scripts/lib/hosts-lookup.sh <path> <name>
-```
 
-The file is a plain path argument — the tool knows nothing about where the repo keeps its secrets, so the caller decides which file to read. The same tool works on any hosts-format file.
+The plugin resolves `<file>` under `secrets/<env>/` and decrypts it with `sops`. It is the single implementation used by inventory, playbooks, and tests.
 
-| Outcome                           | stdout      | exit | stderr                                |
-| --------------------------------- | ----------- | ---- | ------------------------------------- |
-| exactly one line carries the name | the address | 0    | —                                     |
-| no line carries it                | empty       | 1    | `no entry for '<name>' in <path>`     |
-| two or more lines carry it        | empty       | 1    | each claiming line number and address |
+| Outcome                           | Result                                                       |
+| --------------------------------- | ------------------------------------------------------------ |
+| exactly one line carries the name | the address is returned                                      |
+| no line carries it                | `AnsibleError` containing `no entry for '<name>'`            |
+| two or more lines carry it        | `AnsibleError` containing `ambiguous` and each claiming line |
+| file missing/unreadable           | `AnsibleError` carrying sops's own message                   |
 
-A file the decryptor cannot read — absent, unreadable, undecryptable, wrong key — fails ahead of any lookup, with **sops's own message and exit code**. The tool does not pre-check the path: sops reports those conditions more precisely than a length-and-existence check could, and the check would be a second, weaker copy of the same rule.
+A file the decryptor cannot read — absent, unreadable, undecryptable, wrong key — fails before any lookup, with **sops's own message**. The plugin does not pre-check existence; sops reports those conditions more precisely than a length-and-existence check could, and the check would be a second, weaker copy of the same rule.
 
 Two properties are deliberate:
 
-- **Failure is an exit code, never a value.** A resolver that prints `no-entry-<name>` on stdout hands a caller something that looks like an answer; the caller then tries to reach a machine by that name and the real problem is three layers away.
+- **Failure is an exception, never a value.** A resolver that returns `no-entry-<name>` hands a caller something that looks like an answer; the caller then tries to reach a machine by that name and the real problem is three layers away.
 - **An ambiguous name is an error, not a first match.** Two lines claiming one name means the file disagrees with itself about which machine holds that name. Taking the first match would silently address the wrong host — a failure that surfaces much later as an inexplicable connection instead of here as a file problem.
 
 A name repeated _within one line_ is not ambiguous: same line, same address.
 
 **Ordered role list** — field 2 only, which is what keeps an alias out of the member list:
 
-```bash
-awk -v p="$prefix" '$1 ~ /^[0-9.]+$/ && index($2, p) == 1 {print $1}'
+```jinja
+query('wywy_hosts', '<file>', prefix='<prefix>')
 ```
 
-Both operations require field 1 to be address-shaped, so a comment line's `#` is never read as an address. Matching is whitespace-agnostic (spaces or tabs), and a `.` inside a name is literal rather than a regex wildcard.
+Both operations require field 1 to be a valid IP address, so a comment line's `#` is never read as an address. Matching is whitespace-agnostic (spaces or tabs), and a `.` inside a name is literal rather than a regex wildcard.
 
 **Never read `config/.env.network`.** It is deprecated and no new code may take an address from it; the remaining topology keys there are scheduled for deletion.
 
 ## Consumers
 
-| Consumer                                                | Reads                                                                                 | Predicate                                                |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `scripts/lib/hosts-lookup.sh`                           | whatever path it is given                                                             | any name field → address; exits 1 on absent or ambiguous |
-| `scripts/lib/hosts.sh` (`hosts_ip`, `hosts_ip_real`)    | `hosts.sops.yaml`                                                                     | field 2                                                  |
-| `scripts/lib/resolve-hosts.sh`                          | `hosts.sops.yaml`                                                                     | whole file (by design)                                   |
-| `scripts/install/k8s/coredns-hosts.sh`                  | `hosts.sops.yaml`                                                                     | whole file (by design)                                   |
-| Ansible inventory — `inventory/<env>/group_vars/*.yaml` | `secrets/<env>/proxmox-hosts.sops` via `hosts-lookup.sh`, name = `inventory_hostname` | any name field                                           |
-| `scripts/proxmox/target-loop.sh`                        | ordered lists                                                                         | field 2                                                  |
+| Consumer                                                   | Reads                                                 | Predicate                                               |
+| ---------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- |
+| `ansible/plugins/lookup/wywy_hosts.py`                     | whatever sops file it is given under `secrets/<env>/` | any name field → address; raises on absent or ambiguous |
+| `scripts/lib/hosts.sh` (`hosts_ip`, `hosts_ip_real`)       | `hosts.sops.yaml`                                     | field 2                                                 |
+| `scripts/lib/resolve-hosts.sh`                             | `hosts.sops.yaml`                                     | whole file (by design)                                  |
+| `ansible/roles/k8s_network` (`playbooks/k8s/coredns.yaml`) | `hosts.sops.yaml`                                     | whole file (by design)                                  |
+| Ansible inventory — `inventory/<env>/group_vars/*.yaml`    | `wywy_hosts` lookup; name = `inventory_hostname`      | any name field                                          |
+| `scripts/proxmox/target-loop.sh`                           | ordered lists                                         | field 2                                                 |
 
 ## Deviations in the current tree
 
@@ -110,5 +111,6 @@ These are known gaps between this convention and the repository, not alternative
 
 - `secrets/prod/` does not exist — only dev resolves.
 - `secrets/<env>/hosts.sops.yaml` has not been renamed to `hosts.sops`.
+- The current dev tree stores the k8s VM identities and addresses in `ansible/inventory/dev/group_vars/k8s_vms.sops.yaml` under `k8s_vm_definitions`; `k8s_vms` derives `k8s_vm_addresses`, `wywy_worker_ips`, and `wywy_control_plane_ips` from it. There is no `k8s-hosts.sops` or `proxmox-hosts.sops`, and the PVE aliases currently live in `hosts.sops`.
 - `config/.env.network` still carries `{DEV_,}DATABASE_PROXMOX_HOST`, `{DEV_,}DATABASE_TEMPLATE_VMID` and the CI registry keys; the legacy scripts are the only readers.
 - `scripts/lib/hosts.sh` keys on field 2 and does not require field 1 to be address-shaped, so it can neither resolve a field-3 alias nor reject a comment line whose field 2 happens to be the name. Nothing calls it with such input today.
