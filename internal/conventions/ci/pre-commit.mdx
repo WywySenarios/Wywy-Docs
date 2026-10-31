@@ -1,0 +1,117 @@
+---
+title: Pre-commit Conventions
+published: "2026-10-28T01:54:12"
+last_updated: "2026-10-28T01:54:12"
+---
+
+> Local git hooks that run before `git commit` and `git push`. They catch cheap, mechanical defects before a change reaches CI, using the same checks CI runs.
+
+Every Wywy repository carries its own `.pre-commit-config.yaml` at the repository root.
+
+## Rules
+
+- A hook's command, scope, and tool version live in the repository.
+- Avoid machine-specific paths (e.g. `$HOME`, a checkout location, etc.) at all costs.
+- Prefer a repo-local tool invocation (`uv run …`, `npx --yes tool@<version> …`) over a command that assumes a globally installed binary.
+- No hook may be global.
+- No hook may be assumed to be global.
+
+## Hook sources
+
+Hooks must be local. A local hook is a thin adapter. The script it calls should be the same script CI calls (see [`ci.mdx`](ci.mdx)).
+
+- Put check logic in `scripts/tests/**`.
+- Set `pass_filenames: false` when the script defines its own scope (a directory, a full-tree pass, a scanner). A hook that receives filenames must actually use them; if it ignores them, set `pass_filenames: false` so pre-commit does not imply otherwise.
+- Scope cheap hooks with `files`, `types`, or `types_or` so unrelated commits do not pay for them. Chain related hooks on a YAML anchor (`&ansible-files` / `*ansible-files`) rather than repeating a regex.
+- Scripts resolve the repo root themselves (`readlink -f` on `BASH_SOURCE`) and are callable from any working directory, per [`../languages/bash.mdx`](../languages/bash.mdx).
+
+```yaml
+- repo: local
+  hooks:
+    - id: ansible-lint
+      name: ansible-lint
+      entry: scripts/tests/ansible/lint.sh
+      language: system
+      pass_filenames: false
+      files: &ansible-files ^(ansible/|scripts/(install|tests)/ansible)
+```
+
+EXCEPTION: Betterleaks may be an external pinned repo.
+
+```yaml
+repos:
+  - repo: https://github.com/betterleaks/betterleaks
+    rev: v1.9.0
+    hooks:
+      - id: betterleaks
+```
+
+The control repository's `.pre-commit-config.yaml` is the reference implementation for this pattern.
+
+Do not inline a chain of tool invocations in `entry`. If the check needs more than one command, setup, or environment variables, it belongs in a script.
+
+## Staged and full-tree phases
+
+Use the cheapest check that is still correct for each phase.
+
+| Phase        | Scope                          | Purpose                                                |
+| ------------ | ------------------------------ | ------------------------------------------------------ |
+| `pre-commit` | Staged files                   | Fast feedback on the change being committed            |
+| `pre-push`   | Full tree and full git history | Catch defects that only appear across files or history |
+
+Rules:
+
+- Set `default_stages: [pre-commit]` and mark full-tree hooks explicitly with `stages: [pre-push]`.
+- Keep the `pre-commit` phase fast enough to run on every commit. A hook that needs to scan the whole tree or fetch dependencies belongs in `pre-push`, not `pre-commit`.
+- A `pre-push` hook still runs from the repository root with the repository's own toolchain. It is not a second CI pipeline; it is the last local copy of the same checks.
+
+## Hook set and order
+
+Follow left-testing, with the exception of secrets scanning.
+
+1. **Secret scan.** betterleaks against staged content.
+2. **Formatting.** Formatter in check mode for each language present.
+3. **Linting.** Linter for each language present.
+4. **Type checking.** Type checker for each typed language present.
+
+This mirrors the required CI order in [`ci.mdx`](ci.mdx): fail on a leaked credential, then on mechanical defects, before spending time on anything else.
+
+## Secret scanning
+
+Every repository runs the secret scanner locally, with the same redaction settings as CI.
+
+- `pre-commit` scans staged content: `betterleaks git . --staged --redact --no-banner`.
+- `pre-push` scans full history: `betterleaks git . --redact --no-banner --verbose`.
+- `--redact` is mandatory. A finding must not print the secret into the terminal, a log, or a pasted error report.
+- Never append `|| true`, and never run the scanner with `verbose: false` to quiet a finding. A finding fails the hook.
+- Suppress false positives in `.betterleaksignore` by fingerprint, with a comment explaining why each entry is safe. Do not ignore a path or a whole rule.
+- A real leak is not remediated by suppressing it. Rotate the credential, purge it from history, and disclose the finding confidentially. Never copy the value into a commit message, an issue, or a chat.
+
+## Pinning and updates
+
+- Pin every upstream hook to an exact `rev`. Pin every versioned tool invoked by a local hook (`npx --yes prettier@3.5.3`, not `prettier`).
+- `pre-commit autoupdate` is allowed, but its output is a reviewed diff. Run `pre-commit run --all-files` and the repository's test suites before committing the bump.
+- A secret-scanner bump is a security change. Re-check its rules and filters, and revalidate every `.betterleaksignore` fingerprint against the new version.
+- Do not mix a hook change with an unrelated code change. The hook config is reviewed on its own merits.
+
+## Developer workflow
+
+```bash
+# Once per clone
+pre-commit install
+
+# Run the hooks ad-hoc
+pre-commit run
+pre-commit run --all-files
+```
+
+`pre-commit run --all-files` is the full-tree pass a developer uses before pushing or before opening a pull request.
+
+## Related conventions
+
+| Convention                       | File                                             |
+| -------------------------------- | ------------------------------------------------ |
+| CI platform and test entrypoints | [`ci.mdx`](ci.mdx)                               |
+| Jenkins pipelines and stages     | [`jenkins.mdx`](jenkins.mdx)                     |
+| Testing conventions              | [`../testing.mdx`](../testing.mdx)               |
+| Bash scripting                   | [`../languages/bash.mdx`](../languages/bash.mdx) |
