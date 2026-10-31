@@ -1,0 +1,45 @@
+---
+title: Cloudflare Tunnels
+published: "2026-10-25T04:41:38"
+last_updated: "2026-10-25T15:59:39"
+---
+
+Cloudflare Tunnel publishes a service without opening inbound ports.
+Ingress rules live in the Cloudflare API and dashboard, not in repository configuration files.
+
+## Access policies
+
+A tunnel exposes a service to the internet potentially without authentication.
+
+Services with their own authentication (Vaultwarden, for example) are exposed to login attempts and vulnerability scanning.
+Protect a service with a Cloudflare Access application if desired.
+
+To protect a service, create an Access application in the Cloudflare dashboard and attach an allow policy for the intended users or groups.
+Use a bypass policy only for paths that must be reachable without authentication, such as webhooks.
+
+## Prerequisites
+
+The Cloudflare API token needs these permissions.
+
+Account permissions:
+
+- Cloudflare Tunnel: Edit
+- Access: Apps and Policies: Edit
+
+Zone permissions for the domain:
+
+- DNS: Edit
+
+The token, account ID, and zone ID are stored as SOPS-encrypted Ansible group variables (`cloudflare_api_token`, `cloudflare_account_id`, and `cloudflare_zone_id`). See [SOPS + age Setup](./sops-setup.mdx).
+
+The operator machine also needs `uv`, `sops`, and the age private key that matches the repository recipient.
+
+## Optional Manual Verification
+
+- `kubectl rollout status deployment/cloudflared -n <namespace>` reports both replicas ready.
+- `kubectl logs -n <namespace> deploy/cloudflared` has no authentication or connection errors.
+- `kubectl get secret cloudflared-tunnel-token -n <namespace>` exists.
+- `curl -I https://<hostname>` reaches the service, and a hostname not in the ingress configuration returns 404.
+- The CNAME appears in the Cloudflare dashboard as proxied.
+
+For the repository implementation (playbooks, Kubernetes manifests, and token rotation) see [`internal/cloudflare-tunnels.mdx`](../internal/cloudflare-tunnels.mdx).

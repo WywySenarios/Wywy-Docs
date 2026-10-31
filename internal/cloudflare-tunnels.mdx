@@ -1,0 +1,135 @@
+---
+title: Cloudflare Tunnel Implementation
+published: "2026-10-25T15:58:31"
+last_updated: "2026-10-30T20:41:55"
+---
+
+Cloudflare Tunnel publishes a service without opening inbound ports.
+This document describes how tunnels are implemented in this repository.
+The operator-facing overview is in [`docs/cloudflare-tunnels.mdx`](../docs/cloudflare-tunnels.mdx).
+
+## Implementations
+
+There are currently two tunnel implementations. They do not share code; use the one that matches where the workload runs.
+
+| Workload                             | Where                     | Provisioning                                                                      | Runtime                                    |
+| ------------------------------------ | ------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------ |
+| `immich`, `grafana`, `jenkins`, etc. | dev Kubernetes cluster    | `ansible/playbooks/cloudflare/tunnels.yaml` via `ansible/roles/cloudflare_tunnel` | `k8s/base/cloudflared` deployed by Argo CD |
+| `cache`, `master-database`           | prod Docker Compose hosts | manual Cloudflare setup; token stored under `secrets/`                            | cloudflared sidecar container              |
+
+The Kubernetes implementation is the current pattern. The Compose tunnels predate the cluster and are documented per service under `internal/services/`.
+
+## Kubernetes tunnel anatomy
+
+A Kubernetes tunnel has four parts.
+
+| Part                                      | Location                                                                                           |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Tunnel object, ingress config, DNS record | Cloudflare, created by the Ansible role                                                            |
+| Tunnel token                              | `k8s/<env>/cloudflared/<namespace>/secrets/cloudflared-tunnel-token.sops.yaml`, decrypted by KSOPS |
+| cloudflared workload                      | `k8s/base/cloudflared`, overlaid per namespace                                                     |
+| Argo CD Application                       | `k8s/<env>/infrastructure/app-cloudflared-<namespace>.yaml`                                        |
+
+The tunnel ingress points at a cluster-local Service, for example `http://immich-server.immich.svc.cluster.local:2283`. That name resolves because `cloudflared` runs inside the cluster. The role always appends an `http_status:404` fallback so an unmatched hostname does not reach a backend.
+
+The DNS record is a proxied CNAME from the public hostname to `<tunnel-id>.cfargotunnel.com`.
+
+The workload runs two replicas with pod anti-affinity, a read-only root filesystem, no service-account token, and readiness/liveness probes against the metrics endpoint on port 2000. The token is injected as the `TUNNEL_TOKEN` environment variable from the `cloudflared-tunnel-token` Secret.
+
+Each overlay adds a NetworkPolicy. The immich overlay is the reference:
+
+```yaml
+# k8s/dev/cloudflared/immich/network-policy.yaml (egress rules)
+egress:
+  - to: # DNS
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector:
+          matchLabels:
+            k8s-app: kube-dns
+    ports:
+      - protocol: UDP
+        port: 53
+      - protocol: TCP
+        port: 53
+  - to: # the app namespace, any pod
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: immich
+  - to: # Cloudflare edge, no private ranges
+      - ipBlock:
+          cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+    ports:
+      - protocol: TCP
+        port: 443
+      - protocol: UDP
+        port: 7844
+```
+
+The namespace rule is namespace-wide and allows every pod in the target namespace, not just the intended Service. Narrow it with a `podSelector` when the namespace hosts untrusted workloads. The `jenkins` overlay does this: it allows egress only to pods labelled `app: jenkins-controller`.
+
+## Provisioning flow
+
+The role `ansible/roles/cloudflare_tunnel` is idempotent and performs these steps for each host in `cloudflare_public_hosts`:
+
+1. Validate the inputs, including the hostname regex `^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`. Uppercase or underscore hostnames fail.
+2. Look up the tunnel by name with `is_deleted=false`.
+3. Create the tunnel with `config_src: cloudflare` if it does not exist.
+4. PUT the ingress configuration: the hostname-to-Service rule plus the 404 fallback.
+5. Create or update the CNAME. Existing records are patched if they point elsewhere or are not proxied.
+6. If the tunnel was just created, or the token file is missing, fetch the token and write it as a Kubernetes Secret manifest, then `sops`-encrypt it into the overlay secret directory.
+
+A rerun does not rewrite an existing token. To rotate a token, delete the `.sops.yaml` file and rerun the playbook, then restart the `cloudflared` Deployment so the pods pick up the new environment variable. This applies to every Kubernetes tunnel, including `jenkins`.
+
+The role reads `cloudflare_api_token`, `cloudflare_account_id`, and `cloudflare_zone_id` from `ansible/inventory/<env>/group_vars/all.sops.yaml`. The `community.sops` vars plugin decrypts them during inventory parsing. See [SOPS + age Setup](../docs/sops-setup.mdx).
+
+## Adding a tunnel
+
+1. Add an entry to `cloudflare_public_hosts` in `ansible/playbooks/cloudflare/tunnels.yaml`:
+
+   ```yaml
+   - name: vaultwarden-dev
+     hostname: vaultwarden-dev.ericzhu.me
+     namespace: vaultwarden
+     service: http://vaultwarden.vaultwarden.svc.cluster.local:80
+   ```
+
+   The playbook asserts that the environment is `dev`, so public host entries are dev-only by design. Prod tunnels would require a deliberate change to that assertion and a prod inventory.
+
+2. Create the overlay at `k8s/dev/cloudflared/<namespace>/`:
+
+   ```yaml
+   # kustomization.yaml
+   apiVersion: kustomize.config.k8s.io/v1beta1
+   kind: Kustomization
+   namespace: vaultwarden
+   resources:
+     - ../../../base/cloudflared
+     - network-policy.yaml
+     - secrets
+   ```
+
+   Plus `network-policy.yaml` and `secrets/` copied from an existing overlay. In `secrets/`, set the generator name in `ksops-generator.yaml`; the token `.sops.yaml` file itself is generated by the playbook and must not be hand-written.
+
+3. Create `k8s/dev/infrastructure/app-cloudflared-<namespace>.yaml` from an existing Application (change `metadata.name`, `path`, and `destination.namespace`) and add it to the `resources` list in `k8s/dev/infrastructure/kustomization.yaml`.
+
+4. Run the playbook from the repository root:
+
+   ```bash
+   uv run --directory ansible wywy-ansible --dev playbooks/cloudflare/tunnels.yaml
+   ```
+
+5. Commit the generated token file, the overlay, and the Application. Argo CD syncs the workload; the playbook has already created the tunnel, ingress, and DNS.
+
+## Access policies
+
+The role does not create Cloudflare Access applications. It only provisions the tunnel, ingress, and DNS.
+
+`jenkins` is exposed without Access. Its UI is protected by the controller's local `admin` login, whose password lives in `k8s/dev/jenkins/secrets/jenkins-admin.sops.yaml`. If an earlier `Jenkins UI` or `Jenkins GitHub Webhook` Access application still exists in the account, delete it in the Cloudflare dashboard; this repository no longer manages those applications.
+
+For any service that should not be public, add an Access policy manually in the Cloudflare dashboard.
