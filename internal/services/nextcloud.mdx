@@ -1,0 +1,82 @@
+---
+title: Nextcloud
+published: "2026-10-25T20:57:44"
+last_updated: "2026-10-31T04:57:00"
+---
+
+Nextcloud runs as a Deployment in the `nextcloud` namespace.
+Public access is through a dedicated Cloudflare tunnel.
+The operator-facing page is [`docs/nextcloud.mdx`](../../docs/nextcloud.mdx).
+
+Workloads live in `k8s/base/nextcloud`.
+The dev overlay, secrets, Argo CD Applications, and the `nfs-nextcloud` StorageClass sit alongside the other dev services.
+
+## Design constraints
+
+- **One replica, `Recreate`.** The data directory is NFS-backed and must never be written by two pods at once.
+- **uid/gid 3005 on both sides.** The NFS export uses `all_squash`, so every write lands as 3005. A mismatch breaks ownership in `data/` and `config/`.
+- **Read-only root with `NET_BIND_SERVICE`.** Apache runs as 3005 and binds port 80. The image sets this through `APACHE_RUN_USER`/`APACHE_RUN_GROUP`; the `php:apache` `envvars` file uses `:=`, so the values survive image updates.
+- **The whole install lives on the PVC.** The share holds `apps/`, `config/`, `data/`, `custom_apps/`, `themes/`, and `version.php`. On start the entrypoint rsyncs the image tree over it when the image is newer, then runs `occ upgrade`.
+
+## Bootstrap vs. runtime
+
+Database and admin credentials are read only by the installer on first boot. Argo CD keeps the Secret in sync, but the pod never reads it again once `version.php` exists: editing `nextcloud-db-password.sops.yaml` does not rotate the password inside the running instance. There is no automatic rotation of that secret inside the pod. The same is true of the admin password and the trusted-domains value.
+
+After installation the live database password is in `config.php`, and the Postgres role password is set by `postgres_seed`. Rotating the DB password is a manual, coordinated change across the sops Secret, the Postgres role, and `config.php`. Postgres allows one password per role, so the change has a brief authentication gap. Editing only the sops Secret changes what a rebuild would install with, not the running instance.
+
+A hostname change after installation must go through `occ config:system:set trusted_domains`.
+
+The reverse-proxy host, protocol, URL, and trusted-proxy settings are the exception: `reverse-proxy.config.php` reads them from the environment at runtime, so a Deployment change applies after the pod restarts.
+
+## Secrets
+
+| File                                                                       | Secret                     |
+| -------------------------------------------------------------------------- | -------------------------- |
+| `k8s/dev/nextcloud/secrets/nextcloud-db-password.sops.yaml`                | `nextcloud-db-password`    |
+| `k8s/dev/nextcloud/secrets/nextcloud-admin-password.sops.yaml`             | `nextcloud-admin-password` |
+| `k8s/dev/cloudflared/nextcloud/secrets/cloudflared-tunnel-token.sops.yaml` | `cloudflared-tunnel-token` |
+
+The tunnel token is managed by the tunnel playbook. Do not hand-write it.
+See [SOPS + age Setup](../../docs/sops-setup.mdx) for the encryption workflow.
+
+## First boot
+
+An empty `nextcloud-data` volume is expected. The entrypoint rsyncs the image tree onto the NFS volume and runs `occ maintenance:install`.
+This is IO-heavy and can take several minutes.
+
+A successful run logs `Initializing nextcloud ...`, `Starting nextcloud installation`, and `Initializing finished`.
+If the pod restarts before that point, fix the database or secrets.
+The installer retries on the next start.
+
+## Upgrade
+
+Change the image tag in the Deployment and let Argo CD sync. The entrypoint compares `version.php` on the volume with the image: a newer image rsyncs the code and runs `occ upgrade`, while a volume newer than the image refuses to start. `config/`, `data/`, `custom_apps/`, and `themes/` survive. Upgrades are one major version at a time; downgrades are refused. `argocd-image-updater` does not manage this Deployment.
+
+## Troubleshooting
+
+| Symptom                                     | Cause / fix                                                                                                         |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Pod `Pending`, PVC `Pending`                | `dev-csi-driver-nfs` has not applied `nfs-nextcloud`, or the NFS export is missing.                                 |
+| `CrashLoopBackOff` on first boot            | Missing secrets or an unreachable database.                                                                         |
+| `SQLSTATE[28P01]`                           | The role password disagrees with the secret or `config.php`. Re-run `postgres_seed`; update `config.php` if needed. |
+| 502 or 1033 from Cloudflare                 | The connector is down or the Service has no ready endpoints.                                                        |
+| "Access through untrusted domain"           | The stored `trusted_domains` does not include the hostname; the env var is install-time only.                       |
+| Login redirects to the wrong scheme or host | Stale `overwritehost`/`overwriteprotocol`; fix the Deployment and clear the stored values.                          |
+| Permission denied writing files             | The share or pod is not uid/gid 3005.                                                                               |
+| First boot takes many minutes               | Expected; the entrypoint rsyncs the image tree over NFS.                                                            |
+
+## Known limitations
+
+No SMTP is configured, so invitations and password-reset emails are not delivered.
+The Apache image does not start cron.
+Nextcloud uses AJAX background jobs, and the stock `/cron.sh` assumes root.
+No Redis is availble. PHP sessions use `/tmp`, which is fine for one replica.
+
+## References
+
+- [`docs/nextcloud.mdx`](../../docs/nextcloud.mdx)
+- [`docs/cloudflare-tunnels.mdx`](../../docs/cloudflare-tunnels.mdx)
+- [`internal/cloudflare-tunnels.mdx`](../cloudflare-tunnels.mdx)
+- [Nextcloud Docker image](https://github.com/nextcloud/docker)
+- [Nextcloud admin manual](https://docs.nextcloud.com/server/latest/admin_manual/)
+- [Nextcloud reverse proxy configuration](https://docs.nextcloud.com/server/latest/admin_manual/configuration_server/reverse_proxy_configuration.html)

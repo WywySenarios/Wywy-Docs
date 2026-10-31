@@ -1,0 +1,62 @@
+---
+title: Nextcloud
+published: "2026-10-25T20:45:49"
+last_updated: "2026-10-26T16:13:58"
+---
+
+Nextcloud is available at https://nextcloud-dev.ericzhu.me.
+
+## First login
+
+Change the password and enable two-factor authentication before you store anything important.
+
+1. Open your avatar menu → **Personal settings** → **Security**.
+2. Enter a new password and save it.
+3. Enable two-factor authentication and complete the setup with your authenticator app.
+
+Email is not configured on this instance, so do not rely on email verification or email-based password resets.
+
+## Create an account (administrator)
+
+Email is not configured, so the **Invite users** flow cannot deliver invitations. Create the account directly:
+
+1. Sign in as an administrator.
+2. Open **Administration settings** → **Users**.
+3. Select **New user**.
+4. Enter the username, display name, and an initial password.
+5. Optionally set the email address and group.
+6. Create the account. Set the user's quota in the Users list if needed; the instance has 32 GB of shared storage.
+7. Send the username and initial password to the user out-of-band.
+8. Ask the user to change the password and enable two-factor authentication at first login.
+
+## Reset a password
+
+Email-based password resets do not work because SMTP is not configured.
+
+- **User:** ask an administrator to reset the password.
+- **Administrator:** open **Administration settings** → **Users**, select the user, set a new password, and save. Do not use the email-based **Reset password** action. Give the new password to the user out-of-band and ask them to change it.
+
+## Disable or delete an account (administrator)
+
+Open **Administration settings** → **Users**, select the user, and choose **Disable** or **Delete**. Disabling keeps the account and its data; deleting also removes the account's files. Back up or transfer the files before deleting the account.
+
+## Troubleshooting
+
+| Symptom                                              | Fix                                                             |
+| ---------------------------------------------------- | --------------------------------------------------------------- |
+| The page reports "Access through untrusted domain"   | Use https://nextcloud-dev.ericzhu.me.                           |
+| The page does not load or returns a Cloudflare error | Contact the operator; the service may be down.                  |
+| You forgot your password                             | Ask an administrator to reset it; email reset is not available. |
+| You need more storage                                | Ask an administrator to review the account quota.               |
+
+## Security
+
+The instance is reachable from the internet. Use a strong, unique password and enable two-factor authentication. Do not share accounts; ask an administrator for a separate account.
+
+## Support
+
+For account or access problems, contact the operator. For features and client usage, see the [Nextcloud user manual](https://docs.nextcloud.com/server/latest/user_manual/).
+
+## For maintainers
+
+Implementation details are in [internal/services/nextcloud.mdx](../internal/services/nextcloud.mdx).
