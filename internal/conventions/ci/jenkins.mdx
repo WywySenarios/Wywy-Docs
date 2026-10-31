@@ -183,7 +183,6 @@ The token needs these permissions.
 Account permissions:
 
 - Cloudflare Tunnel: Edit
-- Access: Apps and Policies: Edit
 
 Zone permissions for the domain:
 
@@ -197,12 +196,13 @@ cloudflare_account_id: xxx
 cloudflare_zone_id: xxx
 ```
 
-The zone ID is visible in the domain's registration details in the Cloudflare dashboard. Pass the account email that Cloudflare Access should allow:
+The zone ID is visible in the domain's registration details in the Cloudflare dashboard. Provision the Jenkins tunnel through the shared tunnels playbook:
 
 ```bash
-uv run --directory ansible wywy-ansible --dev playbooks/jenkins/cloudflare.yaml \
-  -e '{"cloudflare_access_allowed_emails": ["you@example.com"]}'
+uv run --directory ansible wywy-ansible --dev playbooks/cloudflare/tunnels.yaml
 ```
+
+Jenkins is not placed behind a Cloudflare Access application. The UI is protected by the controller's local `admin` login, whose password is `k8s/dev/jenkins/secrets/jenkins-admin.sops.yaml`.
 
 ## Concurrency, retention, and workspace
 
