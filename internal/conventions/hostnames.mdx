@@ -1,7 +1,7 @@
 ---
 title: Hostname Convention
 published: "2026-10-17T02:54:03"
-last_updated: "2026-10-30T18:47:01"
+last_updated: "2026-11-14T17:18:40"
 ---
 
 **Cross-cutting** — applies to every service, script, manifest, and template that addresses a peer.
@@ -10,7 +10,14 @@ last_updated: "2026-10-30T18:47:01"
 
 An **external host** (a VM or machine outside the compose/Kubernetes network) is addressed by a reserved, environment-stable name in the `*.internal` namespace. A **peer inside** the cluster is addressed by the platform's own DNS name (a Service name: `django`, `postgres`).
 
-Addresses are never written into committed code, config, templates, or scripts. The single home for a `name -> address` mapping is `secrets/<env>/`, encrypted with sops. See [Configuration Conventions](./tech-stack/configuration.mdx) for env-file layout and placeholder notation.
+Public IPv4 addresses are secrets and are never written into committed plaintext. Private IPv4 addresses are not secrets and may appear in committed infrastructure config, docs, and tests. The single home for a public `name -> address` mapping is `secrets/<env>/`, encrypted with sops. Private mappings may live in plaintext infrastructure config, but each mapping still has exactly one home. See [Configuration Conventions](./tech-stack/configuration.mdx) for env-file layout and placeholder notation.
+
+## Address secrecy
+
+Private IPv4 addresses (RFC 1918) are **not** secrets.
+Public IPv4 addresses **are** secrets. They belong in sops-encrypted files.
+A public hostname by itself is not a secret.
+A public `name -> address` mapping is a secret.
 
 ## Naming scheme
 
@@ -50,6 +57,9 @@ Aliases go on the same line **on purpose**. A separate line repeating the addres
 | `secrets/<env>/proxmox-hosts.sops`                   | ordered `proxmox-N.internal` members, with `db-node.internal` as an alias on the line it belongs to | no                                          |
 | `secrets/<env>/k8s-workers-hosts.sops`               | ordered `k8s-worker-N.internal` members                                                             | no                                          |
 | `ansible/inventory/<env>/group_vars/files.sops.yaml` | `wywy_pod_cidr`                                                                                     | n/a                                         |
+
+Private addresses in these files are not secret; encryption remains acceptable.
+Public addresses must not be moved to plaintext.
 
 `hosts.sops.yaml` is consumed **whole** by the two resolvers (`resolve-hosts.sh` overlays it into the operator's `/etc/hosts`; the `k8s_network` Ansible role renders it into the cluster's CoreDNS hosts block), so anything added to it becomes resolvable on the dev machine and inside the cluster. Infrastructure addresses — Proxmox nodes, the gateway — deliberately do **not** belong there.
 

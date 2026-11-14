@@ -1,7 +1,7 @@
 ---
 title: Configuration Conventions
 published: "2026-06-05T00:00:00"
-last_updated: "2026-10-17T01:43:49"
+last_updated: "2026-11-14T17:18:12"
 ---
 
 > **Cross-cutting** — applies to all services regardless of language.
@@ -123,11 +123,21 @@ DATABASE_HOST=db-prod-1               # machine hostname
 
 `localhost` is only valid for a process addressing itself.
 
+### Address secrecy
+
+Private IPv4 addresses (RFC 1918) are **not** secrets.
+They may appear in committed infrastructure config, docs, and tests.
+
+Public IPv4 addresses **are** secrets.
+They must live in sops-encrypted files and must not appear in committed plaintext.
+
+A public hostname by itself is not a secret; a public `name -> address` mapping is.
+
 ### Name resolution, not IP plumbing
 
-IP addresses are an implementation detail of the network layer and **MUST NOT** appear in application code, manifests, env files, or cluster-run scripts:
+IP addresses are an implementation detail of the network layer. Application code, manifests, env files, and cluster-run scripts **MUST** address peers by name, not by IP literal:
 
-- **Single source:** every external-host `name -> IP` mapping lives only in the sops-encrypted hosts file (`secrets/<mode>/hosts.sops.yaml`, hosts-format). Committed code and config never contain a real IP.
+- **Single source:** every public `name -> IP` mapping lives only in the sops-encrypted hosts file (`secrets/<mode>/hosts.sops.yaml`, hosts-format). Private mappings may live in plaintext infrastructure config, but each mapping still has exactly one home.
 - **In-cluster resolution:** CoreDNS resolves `*.internal` names (hosts plugin); peer services resolve via Service DNS.
 - **Dev machine:** `scripts/dev/hostaliases.sh` regenerates `$HOME/.hostaliases` from the same hosts file and exports `HOSTALIASES`, so the same names resolve outside the cluster.
 - **Scripts** read the file directly with `sops -d --output-type binary` + `awk` (e.g. a `hosts_ip <name>` helper) — no python, no per-script IP configuration.
