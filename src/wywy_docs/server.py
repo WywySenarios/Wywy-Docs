@@ -116,8 +116,7 @@ def _reconcile_doc(rel_path: str, abs_path: str) -> None:
                 abs_path=abs_path,
                 rel_path=rel_path,
             )
-    except Exception as e:
-        # Fail-closed: a stale read must not be served as if it were current.
+    except (OSError, RuntimeError, UnicodeError, sqlite3.Error) as e:
         logger.exception("Index reconciliation failed for %s", rel_path)
         msg = f"index reconciliation failed: {e}"
         raise RuntimeError(msg) from e

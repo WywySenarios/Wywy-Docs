@@ -236,9 +236,7 @@ def reindex_after_write(
             abs_path=abs_path,
             rel_path=rel_path,
         )
-    except Exception as e:
-        # Any re-index failure must still clean up and report; `from e`
-        # keeps the original error visible.
+    except (OSError, RuntimeError, UnicodeError, sqlite3.Error) as e:
         logger.exception("Index update failed after document mutation")
         delete_metadata_after_failed_index(db_path, rel_path)
         msg = f"{failure_prefix} but index update failed: {e}"
