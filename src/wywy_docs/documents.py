@@ -30,8 +30,25 @@ from pathlib import Path
 
 import yaml
 
+from wywy_docs.errors import (
+    AmbiguousEditError,
+    DocumentReadError,
+    DocumentWriteError,
+    EditTargetNotFoundError,
+    EmptyOldStringError,
+    IndexUpdateError,
+    InvalidFrontmatterError,
+    MalformedFrontmatterError,
+    MissingParentDirectoryError,
+    PathEscapeError,
+    ReservedFrontmatterError,
+    UnchangedEditError,
+)
+from wywy_docs.errors import (
+    DocNotFoundError as DocNotFoundError,  # noqa: PLC0414  # explicit re-export
+)
 from wywy_docs.indexer import parse_file, reindex_doc
-from wywy_docs.models import DocFrontmatter, Section
+from wywy_docs.models import RESERVED_FRONTMATTER_KEYS, DocFrontmatter, Section
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +62,6 @@ INDEX_LOCK = threading.Lock()
 
 # A frontmatter block splits into at most three parts: "", YAML, body.
 _FRONTMATTER_PARTS = 3
-
-
-class DocNotFoundError(Exception):
-    """A requested document has no file on disk."""
 
 
 # ── Path helpers ────────────────────────────────────────────────────────
@@ -66,14 +79,13 @@ def normalize_doc_path(path: str) -> str:
         Normalized path (e.g. ``foo/bar.mdx``).
 
     Raises:
-        ValueError: If path contains ``..`` traversal.
+        PathEscapeError: If path contains ``..`` traversal.
 
     """
     path = path.strip("/")
 
     if ".." in path.split("/"):
-        msg = "path traversal ('..') is not allowed"
-        raise ValueError(msg)
+        raise PathEscapeError(PathEscapeError.TRAVERSAL_MESSAGE)
 
     if not path.endswith(".mdx"):
         path = path + ".mdx"
@@ -95,7 +107,7 @@ def resolve_section_path(root: str, section: str, path: str) -> str:
         Absolute, symlink-resolved path.
 
     Raises:
-        ValueError: If the resolved path escapes the section directory.
+        PathEscapeError: If the resolved path escapes the section directory.
 
     """
     section_dir = str(Path(root) / section)
@@ -103,8 +115,7 @@ def resolve_section_path(root: str, section: str, path: str) -> str:
     real_abs = os.path.realpath(abs_path)
     real_prefix = os.path.realpath(section_dir)
     if not real_abs.startswith(real_prefix + "/") and real_abs != real_prefix:
-        msg = "path escapes the allowed directory via symlink"
-        raise ValueError(msg)
+        raise PathEscapeError(PathEscapeError.SYMLINK_MESSAGE)
     return abs_path
 
 
@@ -184,7 +195,7 @@ def atomic_write(abs_path: str, full_content: str) -> None:
     except OSError as e:
         if tmp_path is not None:
             Path(tmp_path).unlink(missing_ok=True)
-        raise RuntimeError(str(e)) from e
+        raise DocumentWriteError(error=e) from e
 
 
 def delete_metadata_after_failed_index(db_path: str, rel_path: str) -> None:
@@ -226,7 +237,7 @@ def reindex_after_write(
         failure_prefix: Prefix for the error raised on re-index failure.
 
     Raises:
-        RuntimeError: If the re-index fails (the file is already written).
+        IndexUpdateError: If the re-index fails (the file is already written).
 
     """
     try:
@@ -239,8 +250,7 @@ def reindex_after_write(
     except (OSError, RuntimeError, UnicodeError, sqlite3.Error) as e:
         logger.exception("Index update failed after document mutation")
         delete_metadata_after_failed_index(db_path, rel_path)
-        msg = f"{failure_prefix} but index update failed: {e}"
-        raise RuntimeError(msg) from e
+        raise IndexUpdateError(action=failure_prefix, error=e) from e
 
 
 # ── Shared write pipeline ──────────────────────────────────────────────
@@ -268,9 +278,12 @@ def write_document(  # noqa: PLR0913
         The document's path relative to the root (``"{section}/{path}"``).
 
     Raises:
-        ValueError: If the path, its parent directory, or the frontmatter is
-            invalid.
-        RuntimeError: If the file write or the re-index fails.
+        PathEscapeError: If the path escapes the section directory.
+        MissingParentDirectoryError: If the parent directory does not exist.
+        ReservedFrontmatterError: If a managed key is supplied.
+        InvalidFrontmatterError: If the frontmatter fails validation.
+        DocumentWriteError: If the file cannot be written.
+        IndexUpdateError: If the re-index fails.
 
     """
     path = normalize_doc_path(path)
@@ -278,17 +291,20 @@ def write_document(  # noqa: PLR0913
 
     parent = Path(abs_path).parent
     if not parent.is_dir():
-        msg = "parent directory does not exist"
-        raise ValueError(msg)
+        raise MissingParentDirectoryError
 
     if frontmatter is None:
         frontmatter = {}
+
+    for key in RESERVED_FRONTMATTER_KEYS:
+        if key in frontmatter:
+            raise ReservedFrontmatterError(key=key)
 
     # Validate user frontmatter before any I/O.
     try:
         DocFrontmatter(frontmatter)
     except ValueError as e:
-        raise ValueError(str(e)) from e
+        raise InvalidFrontmatterError(error=e) from e
 
     rel_path = f"{section}/{path}"
 
@@ -305,8 +321,6 @@ def write_document(  # noqa: PLR0913
 
 # ── Edit helpers ───────────────────────────────────────────────────────
 
-_MALFORMED_FRONTMATTER_MSG = "document has malformed frontmatter; use write_doc"
-
 
 def _assert_editable_frontmatter(raw: str) -> None:
     """Reject a frontmatter header that an edit cannot safely rewrite.
@@ -320,7 +334,8 @@ def _assert_editable_frontmatter(raw: str) -> None:
         raw: Full raw file text.
 
     Raises:
-        ValueError: If the header is unterminated, malformed, or not a mapping.
+        MalformedFrontmatterError: If the header is unterminated, malformed,
+            or not a mapping.
 
     """
     if not raw.startswith("---"):
@@ -328,7 +343,7 @@ def _assert_editable_frontmatter(raw: str) -> None:
 
     parts = raw.split("---", 2)
     if len(parts) < _FRONTMATTER_PARTS:
-        raise ValueError(_MALFORMED_FRONTMATTER_MSG)
+        raise MalformedFrontmatterError
 
     header = parts[1]
     if not header.strip():
@@ -337,11 +352,11 @@ def _assert_editable_frontmatter(raw: str) -> None:
     try:
         parsed = yaml.safe_load(header)
     except yaml.YAMLError as e:
-        raise ValueError(_MALFORMED_FRONTMATTER_MSG) from e
+        raise MalformedFrontmatterError from e
 
     if not isinstance(parsed, dict):
-        # The public contract reports malformed input as ValueError.
-        raise ValueError(_MALFORMED_FRONTMATTER_MSG)  # noqa: TRY004
+        # The public contract reports malformed input as a ValueError.
+        raise MalformedFrontmatterError
 
 
 def _replace_body(
@@ -365,27 +380,23 @@ def _replace_body(
         The updated body and the number of occurrences that matched.
 
     Raises:
-        ValueError: If *old_string* is empty or equal to *new_string*, does not
-            occur in *body*, or matches ambiguously without *replace_all*.
+        EmptyOldStringError: If *old_string* is empty.
+        UnchangedEditError: If *old_string* equals *new_string*.
+        EditTargetNotFoundError: If *old_string* does not occur in *body*.
+        AmbiguousEditError: If *old_string* matches ambiguously without
+            *replace_all*.
 
     """
     if not old_string:
-        msg = "old_string must not be empty"
-        raise ValueError(msg)
+        raise EmptyOldStringError
     if old_string == new_string:
-        msg = "old_string and new_string must differ"
-        raise ValueError(msg)
+        raise UnchangedEditError
 
     count = body.count(old_string)
     if count == 0:
-        msg = f"old_string not found in {rel_path}"
-        raise ValueError(msg)
+        raise EditTargetNotFoundError(rel_path=rel_path)
     if count > 1 and not replace_all:
-        msg = (
-            f"old_string matches {count} times in {rel_path}; "
-            "set replace_all=true to replace all occurrences"
-        )
-        raise ValueError(msg)
+        raise AmbiguousEditError(count=count, rel_path=rel_path)
 
     if replace_all:
         new_body = body.replace(old_string, new_string)
@@ -429,8 +440,15 @@ def edit_document(  # noqa: PLR0913
 
     Raises:
         DocNotFoundError: If the document has no file on disk.
-        ValueError: If the path, frontmatter, or edit is invalid.
-        RuntimeError: If the file read/write or the re-index fails.
+        PathEscapeError: If the path escapes the section directory.
+        MalformedFrontmatterError: If the frontmatter cannot be edited.
+        EmptyOldStringError: If *old_string* is empty.
+        UnchangedEditError: If the edit is a no-op.
+        EditTargetNotFoundError: If *old_string* is absent from the body.
+        AmbiguousEditError: If the match is ambiguous without *replace_all*.
+        DocumentReadError: If the document cannot be read.
+        DocumentWriteError: If the document cannot be written.
+        IndexUpdateError: If the re-index fails.
 
     """
     path = normalize_doc_path(path)
@@ -439,15 +457,14 @@ def edit_document(  # noqa: PLR0913
 
     with INDEX_LOCK:
         if not Path(abs_path).is_file():
-            msg = f"document not found: {rel_path}"
-            raise DocNotFoundError(msg)
+            raise DocNotFoundError(rel_path=rel_path)
 
         try:
             raw = Path(abs_path).read_text(encoding="utf-8")
             _assert_editable_frontmatter(raw)
             parsed = parse_file(abs_path, root=root, raw=raw)
         except (OSError, UnicodeError) as e:
-            raise RuntimeError(str(e)) from e
+            raise DocumentReadError(error=e) from e
 
         new_body, count = _replace_body(
             parsed["content"],

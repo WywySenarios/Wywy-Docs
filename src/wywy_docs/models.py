@@ -6,7 +6,11 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, model_validator
 
+from wywy_docs.errors import ReservedFrontmatterError
+
 Section = Literal["docs", "internal"]
+
+RESERVED_FRONTMATTER_KEYS = ("published", "last_updated")
 
 
 class DocFrontmatter(BaseModel):
@@ -35,10 +39,7 @@ class DocFrontmatter(BaseModel):
         if not isinstance(data, dict):
             return data
         data_dict = cast("dict[str, object]", data)
-        for key in ("published", "last_updated"):
+        for key in RESERVED_FRONTMATTER_KEYS:
             if key in data_dict:
-                msg = (
-                    f"'{key}' is a reserved frontmatter key and cannot be set manually"
-                )
-                raise ValueError(msg)
+                raise ReservedFrontmatterError(key=key)
         return data_dict

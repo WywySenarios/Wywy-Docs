@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from wywy_docs.errors import MissingConsoleScriptError, NotEditableInstallError
+
 SYSTEMD_UNIT = """\
 [Unit]
 Description=Wywy-Docs MCP Server
@@ -48,12 +50,7 @@ def _repo_root() -> Path:
     """
     candidate = Path(__file__).resolve().parents[2]
     if not (candidate / "pyproject.toml").is_file():
-        msg = (
-            "wywy-docs-install must run from an editable install of the "
-            "Wywy-Docs checkout (run `uv sync` in the repo); derived root "
-            f"{candidate} has no pyproject.toml"
-        )
-        raise RuntimeError(msg)
+        raise NotEditableInstallError(root=candidate)
     return candidate
 
 
@@ -61,11 +58,7 @@ def _require_venv_script(root: Path) -> None:
     """Raise unless ``wywy-docs-serve`` exists in the checkout venv."""
     serve = root / ".venv" / "bin" / "wywy-docs-serve"
     if not serve.is_file():
-        msg = (
-            f"missing console script {serve}; run `uv sync` in {root} "
-            "to create it before installing the service"
-        )
-        raise RuntimeError(msg)
+        raise MissingConsoleScriptError(serve=serve, root=root)
 
 
 def main() -> None:

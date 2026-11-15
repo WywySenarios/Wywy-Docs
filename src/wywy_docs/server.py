@@ -28,12 +28,20 @@ from mcp.types import (
 )
 
 from wywy_docs.documents import INDEX_LOCK as _INDEX_LOCK
-from wywy_docs.documents import (
-    DocNotFoundError as DocNotFoundError,  # noqa: PLC0414  # explicit re-export
-)
 from wywy_docs.documents import edit_document, write_document
 from wywy_docs.documents import normalize_doc_path as _normalize_doc_path
 from wywy_docs.documents import resolve_section_path as _resolve_section_path
+from wywy_docs.errors import (
+    DeleteFileError,
+    EmptyQueryError,
+    IndexDeleteError,
+    IndexReconciliationError,
+    InvalidDeletePathError,
+    SearchError,
+)
+from wywy_docs.errors import (
+    DocNotFoundError as DocNotFoundError,  # noqa: PLC0414  # explicit re-export
+)
 from wywy_docs.indexer import (
     build_index,
     doc_mtime,
@@ -99,7 +107,7 @@ def _reconcile_doc(rel_path: str, abs_path: str) -> None:
         abs_path: Absolute path to the on-disk file.
 
     Raises:
-        RuntimeError: If the re-index fails (fail-closed).
+        IndexReconciliationError: If the re-index fails (fail-closed).
 
     """
     mtime = Path(abs_path).stat().st_mtime_ns
@@ -118,8 +126,7 @@ def _reconcile_doc(rel_path: str, abs_path: str) -> None:
             )
     except (OSError, RuntimeError, UnicodeError, sqlite3.Error) as e:
         logger.exception("Index reconciliation failed for %s", rel_path)
-        msg = f"index reconciliation failed: {e}"
-        raise RuntimeError(msg) from e
+        raise IndexReconciliationError(error=e) from e
 
 
 def _sanitize_query(query: str) -> str:
@@ -131,14 +138,13 @@ def _sanitize_query(query: str) -> str:
     rather than operator syntax (``-``, ``OR``, ``*``, etc.).
 
     Raises:
-        ValueError: If no tokens remain after sanitization.
+        EmptyQueryError: If no tokens remain after sanitization.
 
     """
     _strip = {ord('"'): None, **dict.fromkeys(range(32))}
     tokens = query.translate(_strip).split()
     if not tokens:
-        msg = "query must be a non-empty string"
-        raise ValueError(msg)
+        raise EmptyQueryError
     return " ".join(f'"{t}"' for t in tokens)
 
 
@@ -161,8 +167,7 @@ def search_docs(query: str, max_results: int = 10):  # type: ignore[no-untyped-d
 
     """
     if not query or not query.strip():
-        msg = "query must be a non-empty string"
-        raise ValueError(msg)
+        raise EmptyQueryError
     sanitized = _sanitize_query(query)
     db = _db_path()
     conn: sqlite3.Connection | None = None
@@ -191,7 +196,7 @@ def search_docs(query: str, max_results: int = 10):  # type: ignore[no-untyped-d
         ]
         return json.dumps(results)
     except sqlite3.OperationalError as e:
-        raise RuntimeError(str(e)) from e
+        raise SearchError(error=e) from e
     finally:
         if conn is not None:
             conn.close()
@@ -220,8 +225,7 @@ def get_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
                     path,
                     exc_info=True,
                 )
-        msg = f"document not found: {path}; its index entry was removed"
-        raise DocNotFoundError(msg)
+        raise DocNotFoundError(rel_path=path, index_removed=True)
     # Only paths the indexer records (`docs/`, `internal/`) are reconciled;
     # a section-less path is read straight from disk with no index side effect.
     if path.startswith(("docs/", "internal/")):
@@ -311,8 +315,7 @@ def delete_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
     elif path.startswith("internal/"):
         section = "internal"
     else:
-        msg = "path must be under docs/ or internal/"
-        raise ValueError(msg)
+        raise InvalidDeletePathError
 
     # Strip section prefix and normalize
     path = path[len(section) + 1 :]
@@ -325,7 +328,7 @@ def delete_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
     except FileNotFoundError:
         pass
     except OSError as e:
-        raise RuntimeError(str(e)) from e
+        raise DeleteFileError(error=e) from e
 
     # Clean index entries
     rel_path = f"{section}/{path}"
@@ -338,7 +341,7 @@ def delete_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
             conn.execute("DELETE FROM file_metadata WHERE path = ?", (rel_path,))
             conn.commit()
         except sqlite3.OperationalError as e:
-            raise RuntimeError(str(e)) from e
+            raise IndexDeleteError(error=e) from e
         finally:
             if conn is not None:
                 conn.close()
