@@ -1,7 +1,8 @@
 """MCP HTTP SSE server for Wywy-Docs.
 
 Exposes the FTS5 documentation index as MCP tools (``search_docs``,
-``get_doc``) via the standard MCP SSE transport.
+``get_doc``, ``write_doc``, ``edit_doc``, ``delete_doc``) via the standard
+MCP SSE transport.
 """
 
 from __future__ import annotations
@@ -11,13 +12,8 @@ import json
 import logging
 import os
 import sqlite3
-import tempfile
-import threading
-import time
-from datetime import date, datetime
 from pathlib import Path
 
-import yaml
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.shared.exceptions import McpError
@@ -31,6 +27,13 @@ from mcp.types import (
     TextContent,
 )
 
+from wywy_docs.documents import INDEX_LOCK as _INDEX_LOCK
+from wywy_docs.documents import (
+    DocNotFoundError as DocNotFoundError,  # noqa: PLC0414  # explicit re-export
+)
+from wywy_docs.documents import edit_document, write_document
+from wywy_docs.documents import normalize_doc_path as _normalize_doc_path
+from wywy_docs.documents import resolve_section_path as _resolve_section_path
 from wywy_docs.indexer import (
     build_index,
     doc_mtime,
@@ -38,7 +41,7 @@ from wywy_docs.indexer import (
     reindex_doc,
     remove_doc,
 )
-from wywy_docs.models import DocFrontmatter, Section
+from wywy_docs.models import Section  # noqa: TC001  # FastMCP needs it at runtime
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +49,6 @@ logger = logging.getLogger(__name__)
 # ── Globals ───────────────────────────────────────────────────────────
 
 _ROOT_DIR: str = ""
-
-# Serialises index mutations (write reindex, read reconciliation, delete
-# cleanup) within this process.  Only the server wrappers acquire it; the
-# indexer functions never do, so there is exactly one lock owner and no nested
-# acquisition.
-_INDEX_LOCK = threading.Lock()
 
 mcp = FastMCP("wywy-docs", message_path="/messages/")
 
@@ -126,36 +123,6 @@ def _reconcile_doc(rel_path: str, abs_path: str) -> None:
         raise RuntimeError(msg) from e
 
 
-# ── Path helpers ────────────────────────────────────────────────────────
-
-
-def _normalize_doc_path(path: str) -> str:
-    """Strip leading/trailing slashes and append ``.mdx`` if needed.
-
-    Rejects path traversal.
-
-    Args:
-        path: Relative document path (e.g. ``foo/bar`` or ``/foo/bar/``).
-
-    Returns:
-        Normalized path (e.g. ``foo/bar.mdx``).
-
-    Raises:
-        ValueError: If path contains ``..`` traversal.
-
-    """
-    path = path.strip("/")
-
-    if ".." in path.split("/"):
-        msg = "path traversal ('..') is not allowed"
-        raise ValueError(msg)
-
-    if not path.endswith(".mdx"):
-        path = path + ".mdx"
-
-    return path
-
-
 def _sanitize_query(query: str) -> str:
     r"""Convert a user query into a literal FTS5 phrase-AND query.
 
@@ -174,123 +141,6 @@ def _sanitize_query(query: str) -> str:
         msg = "query must be a non-empty string"
         raise ValueError(msg)
     return " ".join(f'"{t}"' for t in tokens)
-
-
-def _resolve_section_path(section: str, path: str) -> str:
-    """Resolve an absolute filesystem path within a section.
-
-    Guards against symlink-based directory escape.
-
-    Args:
-        section: ``"docs"`` or ``"internal"``.
-        path: Normalized path relative to the section directory.
-
-    Returns:
-        Absolute, symlink-resolved path.
-
-    Raises:
-        ValueError: If the resolved path escapes the section directory.
-
-    """
-    section_dir = str(Path(_ROOT_DIR) / section)
-    abs_path = str(Path(section_dir) / path)
-    real_abs = os.path.realpath(abs_path)
-    real_prefix = os.path.realpath(section_dir)
-    if not real_abs.startswith(real_prefix + "/") and real_abs != real_prefix:
-        msg = "path escapes the allowed directory via symlink"
-        raise ValueError(msg)
-    return abs_path
-
-
-# ── write_doc helpers ─────────────────────────────────────────────────
-
-
-def _read_existing_frontmatter(abs_path: str) -> dict[str, object]:
-    """Return the frontmatter of *abs_path*, or ``{}`` if missing/unreadable."""
-    if not Path(abs_path).is_file():
-        return {}
-    try:
-        parsed = parse_file(abs_path, root=_ROOT_DIR)
-    except OSError:
-        logger.debug(
-            "Failed to read existing frontmatter for %s",
-            abs_path,
-            exc_info=True,
-        )
-        return {}
-    return parsed["frontmatter"]
-
-
-def _resolve_published(existing_fm: dict[str, object]) -> str:
-    """Return the ``published`` value, keeping *existing_fm* or defaulting to now."""
-    pub_val = existing_fm.get("published")
-    if pub_val is None:
-        return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
-    if isinstance(pub_val, str):
-        return pub_val
-    if isinstance(pub_val, (date, datetime)):
-        return pub_val.isoformat()
-    return str(pub_val)
-
-
-def _atomic_write(abs_path: str, full_content: str) -> None:
-    """Write *full_content* to *abs_path* via a temp file in the same dir."""
-    try:
-        fd, tmp_path = tempfile.mkstemp(dir=Path(abs_path).parent)
-        with os.fdopen(fd, "w") as f:
-            f.write(full_content)
-        Path(tmp_path).rename(abs_path)
-    except OSError as e:
-        raise RuntimeError(str(e)) from e
-
-
-def _delete_metadata_after_failed_index(db_path: str, rel_path: str) -> None:
-    """Best-effort removal of the *rel_path* ``file_metadata`` entry."""
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.execute(
-            "DELETE FROM file_metadata WHERE path = ?",
-            (rel_path,),
-        )
-        conn.commit()
-        conn.close()
-    except sqlite3.Error:
-        logger.debug(
-            "Failed to clean up file_metadata after failed re-index",
-            exc_info=True,
-        )
-
-
-def _reindex_after_write(rel_path: str, abs_path: str) -> None:
-    """Re-index the written document; on failure clean up metadata and re-raise.
-
-    Only the written document is re-indexed, so an unrelated file changed on
-    disk outside the tool keeps its existing index rows.
-
-    Args:
-        rel_path: Index key for the document, relative to the root.
-        abs_path: Absolute path to the just-written file.
-
-    Raises:
-        RuntimeError: If the re-index fails (the file is already written).
-
-    """
-    db_path = _db_path()
-    try:
-        with _INDEX_LOCK:
-            reindex_doc(
-                root=_ROOT_DIR,
-                db_path=db_path,
-                abs_path=abs_path,
-                rel_path=rel_path,
-            )
-    except Exception as e:
-        # Any re-index failure must still clean up and report; `from e`
-        # keeps the original error visible.
-        logger.exception("Index update failed after write")
-        _delete_metadata_after_failed_index(db_path, rel_path)
-        msg = f"file written but index update failed: {e}"
-        raise RuntimeError(msg) from e
 
 
 # ── Tool implementations ──────────────────────────────────────────────
@@ -400,51 +250,50 @@ def write_doc(  # type: ignore[no-untyped-def]  # noqa: ANN201
         frontmatter: Optional YAML frontmatter fields.
 
     """
-    # Normalize path and resolve symlink-safe absolute path
-    path = _normalize_doc_path(path)
-    abs_path = _resolve_section_path(section, path)
-
-    # Check parent directory exists
-    parent = Path(abs_path).parent
-    if not parent.is_dir():
-        msg = "parent directory does not exist"
-        raise ValueError(msg)
-
-    # Normalise frontmatter
-    if frontmatter is None:
-        frontmatter = {}
-
-    # Validate user frontmatter before any I/O
-    try:
-        DocFrontmatter(frontmatter)
-    except ValueError as e:
-        raise ValueError(str(e)) from e
-
-    # Merge: existing (minus reserved) → user fields → published/last_updated
-    existing_fm = _read_existing_frontmatter(abs_path)
-    existing_filtered = {
-        k: v for k, v in existing_fm.items() if k not in ("published", "last_updated")
-    }
-    merged_fm = {
-        **existing_filtered,
-        **frontmatter,
-        "published": _resolve_published(existing_fm),
-        "last_updated": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()),
-    }
-
-    # Serialize frontmatter and write atomically, then re-index
-    fm_yaml = yaml.safe_dump(
-        merged_fm,
-        default_flow_style=False,
-        allow_unicode=True,
-        sort_keys=False,
+    rel_path = write_document(
+        _ROOT_DIR,
+        _db_path(),
+        section,
+        path,
+        content,
+        frontmatter,
     )
-    full_content = f"---\n{fm_yaml}---\n\n{content}"
-    _atomic_write(abs_path, full_content)
-    rel_path = f"{section}/{path}"
-    _reindex_after_write(rel_path, abs_path)
-
     return json.dumps({"path": rel_path})
+
+
+@mcp.tool()
+def edit_doc(  # type: ignore[no-untyped-def]  # noqa: ANN201
+    section: Section,
+    path: str,
+    old_string: str,
+    new_string: str,
+    *,
+    replace_all: bool = False,
+):
+    """Edit a document body by exact string replacement.
+
+    Only the body is edited.
+    ``last_updated`` is refreshed and existing frontmatter is otherwise preserved.
+
+    Args:
+        section: Section to edit ("docs" or "internal").
+        path: Path relative to the section directory.
+        old_string: Literal text to find in the body.
+        new_string: Literal replacement text.
+        replace_all: Replace every occurrence instead of requiring the
+            match to be unique (default false).
+
+    """
+    rel_path, count = edit_document(
+        _ROOT_DIR,
+        _db_path(),
+        section,
+        path,
+        old_string,
+        new_string,
+        replace_all=replace_all,
+    )
+    return json.dumps({"path": rel_path, "replacements": count})
 
 
 @mcp.tool()
@@ -469,7 +318,7 @@ def delete_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
     # Strip section prefix and normalize
     path = path[len(section) + 1 :]
     path = _normalize_doc_path(path)
-    abs_path = _resolve_section_path(section, path)
+    abs_path = _resolve_section_path(_ROOT_DIR, section, path)
 
     # Delete file (idempotent: already gone → success)
     try:
@@ -499,15 +348,6 @@ def delete_doc(path: str):  # type: ignore[no-untyped-def]  # noqa: ANN201
 
 
 # ── Errors ────────────────────────────────────────────────────────────
-
-
-class DocNotFoundError(Exception):
-    """Signal that a requested document has no file on disk.
-
-    Deliberately not a ``ValueError`` or ``RuntimeError``: a missing document
-    is a distinct outcome from invalid input or an internal failure, so the
-    call-tool handler maps it to its own JSON-RPC error code.
-    """
 
 
 # JSON-rpc error code

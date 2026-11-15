@@ -130,13 +130,20 @@ def scan_files(root_dirs: list[str]) -> list[str]:
     return sorted(files)
 
 
-def parse_file(filepath: str, root: str) -> ParsedFile:
+def parse_file(
+    filepath: str,
+    root: str,
+    *,
+    raw: str | None = None,
+) -> ParsedFile:
     """Parse a single ``.mdx`` file.
 
     Args:
         filepath: Absolute path to the ``.mdx`` file.
         root: Absolute path to the Wywy-Docs root directory (used to compute
             the relative ``path`` output key).
+        raw: Optional pre-read file contents.  When provided, *filepath* is not
+            opened, so the caller's validated text is the text that is parsed.
 
     Returns:
         A dict with keys:
@@ -149,8 +156,9 @@ def parse_file(filepath: str, root: str) -> ParsedFile:
           ``"internal"`` if it starts with ``internal/``, ``None`` otherwise.
 
     """
-    with Path(filepath).open() as f:
-        raw = f.read()
+    if raw is None:
+        with Path(filepath).open(encoding="utf-8") as f:
+            raw = f.read()
 
     frontmatter: dict[str, object] = {}
     title: str | None = None

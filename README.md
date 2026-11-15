@@ -35,6 +35,48 @@ systemctl --user restart wywy-docs-mcp
 Reads a document by `path` (string, relative to the Wywy-Docs root directory) directly from disk, returning its content and frontmatter.
 If the path does not end in `.mdx`, `.mdx` is appended.
 
+### write_doc
+
+Creates or updates a document.
+
+- `section` (string): `docs` or `internal`.
+- `path` (string): path relative to the section directory. If it does not end in `.mdx`, `.mdx` is appended.
+- `content` (string): document body text (after the frontmatter).
+- `frontmatter` (object, optional): YAML frontmatter fields. `published` and `last_updated` are managed by the server and cannot be set manually.
+
+Existing frontmatter is preserved; `published` is kept and `last_updated` is refreshed.
+
+Returns:
+
+```json
+{ "path": "docs/example.mdx" }
+```
+
+### edit_doc
+
+Edits a document body by exact string replacement.
+
+- `section` (string): `docs` or `internal`.
+- `path` (string): path relative to the section directory. If it does not end in `.mdx`, `.mdx` is appended.
+- `old_string` (string): non-empty literal text to find in the body.
+- `new_string` (string): literal replacement text.
+- `replace_all` (boolean, optional): replace every occurrence instead of requiring a unique match (default `false`).
+
+Only the body is replaced.
+`last_updated` is updated and the existing frontmatter is otherwise preserved.
+
+The following will trigger errors:
+
+- `old_string` that does not occur in the body
+- a no-op edit
+- an ambiguous match without `replace_all` is rejected.
+
+Returns:
+
+```json
+{ "path": "docs/example.mdx", "replacements": 1 }
+```
+
 ### delete_doc
 
 Deletes a document by `path` (string, relative to the Wywy-Docs root directory).
@@ -52,6 +94,5 @@ Returns:
 
 ### Symlink path escape protection
 
-`delete_doc` resolves symlinks before path validation to prevent directory escape.
-The same protection applies to `write_doc`.
+`delete_doc`, `write_doc`, and `edit_doc` resolve symlinks before path validation to prevent directory escape.
 `get_doc` does NOT perform this check (read access is less restricted than write/delete access).
