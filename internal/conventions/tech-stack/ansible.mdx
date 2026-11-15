@@ -1,0 +1,117 @@
+---
+title: Ansible Conventions
+published: "2026-11-15T21:03:25"
+last_updated: "2026-11-15T21:24:23"
+---
+
+> Ansible-specific rules for playbooks, roles, tasks, variables, and comments. Addresses follow [`../hostnames.mdx`](../hostnames.mdx); environment values follow [`configuration.mdx`](configuration.mdx).
+
+## YAML
+
+- Every file starts with `---`. One document per file.
+- Two-space indent. Indent list items under their key. One blank line between top-level tasks.
+- Quote anything YAML could coerce: modes (`"0755"`), versions (`"1.10"`), booleans-as-strings (`"yes"`, `"on"`), and numeric-looking names.
+- Use `|` for multi-line commands, file contents, and templates. Use `>-` only for prose.
+- Keys are `lower_snake_case`. File names are `lower-kebab-case.yaml`, except Ansible-required `main.yaml`.
+- No tabs, no trailing whitespace, final newline.
+
+## Playbooks
+
+- One play performs one provisioning or configuration stage. The file name names that stage.
+- Declare `name`, `hosts`, `gather_facts`, and `become` on every play. Do not rely on implicit defaults.
+- `hosts` targets a group. Never a host list, a comma string, or `all`.
+- Keep the play thin: roles or `include_role`. Inline tasks are only for orchestration, waits, and small guards.
+- Set `become` and `become_user` at the narrowest scope that is correct.
+- After creating or recreating a host, add a play that waits for it with `wait_for_connection`.
+- Name plays in imperative sentence case.
+- Every playbook must pass `ansible-playbook --syntax-check` with `ANSIBLE_INVENTORY=/dev/null` and the pinned collections installed.
+
+## Roles
+
+- A role owns one service or one concern. Split it when it has two independent lifecycles or two independent input sets.
+- Directories have one job: `defaults/` overridable values, `vars/` non-overridable constants, `files/` static files, `templates/` Jinja, `tasks/` logic, `handlers/` service actions, `meta/` dependencies and platform support.
+- `tasks/main.yaml` orchestrates. Split by concern into `<concern>.yaml`: `packages`, `configure`, `service`, `tls`, `secrets`.
+- Prefer `import_tasks` for static structure. Use `include_tasks` when tasks are conditional, tagged, or selected at runtime.
+- Role names and role directories are `lower_snake_case` and must match.
+- Every domain directory must be on `roles_path`; a role that does not resolve is a config defect, not an Ansible mystery.
+
+## Tasks
+
+- Every play, block, and task has a `name` in imperative sentence case. Name the wanted state, not the module.
+- Use fully qualified module names (`ansible.builtin.copy`, `community.postgresql.postgresql_user`).
+- Prefer declarative modules over `command` and `shell`.
+- For `command`: use `argv` when arguments contain variables; use `cmd` only for a fixed string.
+- Use `shell` only when pipes or redirection are required, and set `set -o pipefail` at the top.
+- Every `command` and `shell` sets `changed_when`. Read-only commands use `changed_when: false`.
+- A read whose result gates a later task sets `check_mode: false`. A skipped read makes the guard decide on empty output.
+- Use `failed_when` for an expected non-zero exit and comment why. Never use `ignore_errors`.
+- Use `register` only when the result is consumed. Name the variable after the role and task.
+- Use `block` and `always` for temporary files, staging directories, and cleanup.
+- Use `loop` with `loop_control.label` so output identifies the item instead of dumping a dict.
+- Set `no_log: true` on every task that handles secret material, including `set_fact`, readback, and `include_role`.
+- Use `delegate_to` and `run_once` for controller work and cluster-wide one-shots. Do not fake locality with a host list.
+- Set `become` per task when only part of the role needs root.
+
+## Validation and failure
+
+- Validate every input before mutating: type, length, range, allowed characters, allowed values.
+- Every `assert` sets `quiet: true` and a `fail_msg` that states the observed value and the fix.
+- Fail closed on missing input, missing files, unexpected ownership, ambiguous targets, or an empty list that must not be empty.
+- Probe before destroying: check the target identifier, mount point, device, directory, or marker belongs to this role.
+- Enable a firewall only after every allow rule is in place.
+
+## Idempotence
+
+- Guard every action with current state: a declarative module, `creates`/`removes`, or a read-and-compare.
+- A finished role re-runs with no changes. A half-finished role resumes at the first unfinished step.
+- Read back the wanted state and assert on it. “The task ran” is not evidence.
+- Create temporary paths with `tempfile`, restrict their mode, and remove them in `always`.
+
+## Variables
+
+- Prefix every role variable with the role name. The prefix prevents collisions when roles are combined.
+- Put overridable values in `defaults/main.yaml`. Put required values in a header comment and enforce them with `assert`.
+- Defaults contain no addresses, hostnames, environment names, credentials, or other deployment facts.
+- Convert human input at the boundary once. Accept `"128G"` in inventory; derive the integer the command needs in defaults.
+- Use `group_vars` for values shared by a group; use `host_vars` only for a value unique to one host. Every value has one owner.
+- Use `true`/`false` for booleans, quote version strings, and use `omit` to leave an optional module argument unset.
+- Put shared playbook variables in `vars_files`; do not repeat them in each play.
+
+## Comments and descriptions
+
+- Every playbook and role starts with a short header: purpose, required inputs, side effects, and prerequisites.
+- Every non-obvious command, regex, magic value, or ordering dependency gets a comment explaining why it is there.
+- Document required variables in the role header and optional variables next to their defaults with accepted form and default.
+- Comments explain why, not what. If a task name already says it, the comment is noise.
+- The task `name` is the description. The `assert` `fail_msg` is the error description. Neither needs a matching comment.
+- Mark deferred work with `TODO:` and a reason. Do not leave commented-out code, changelog comments, author tags, or dead tasks.
+
+## Secrets
+
+- Sops is the only secret store. No plaintext secret in a playbook, var file, task argument, log, debug message, `fail_msg`, or commit.
+- Decrypt to stdout and register the result. Never decrypt into a file inside the repository.
+- Set `no_log: true` on every task that touches secret material. Do not rely on Ansible's censoring heuristics.
+- Write secrets through one shared role or helper. Do not hand-roll encryption in service roles.
+- A secret write stages plaintext with a private mode, encrypts with the repo config, installs the ciphertext, verifies it round-trips, and removes the staging path in `always`.
+- Population creates missing secrets only. Rotation is a separate playbook and requires exactly one explicit tag.
+- Never put a secret on a command line. Pass it over stdin or a task-scoped environment variable.
+
+## Testing and linting
+
+- Run `ansible-lint` with the production profile.
+- Syntax-check every playbook with `ANSIBLE_INVENTORY=/dev/null`.
+- Test inventory contracts and custom plugins with pytest.
+- Run the Python linter and type checker in strict mode on plugins, entrypoints, and tests.
+- CI and pre-commit call the same scripts; neither reimplement the commands.
+- CI and agents run static checks only. They never run playbooks against real hosts.
+
+## Related conventions
+
+| Convention                         | File                                             |
+| ---------------------------------- | ------------------------------------------------ |
+| Hostnames and address lookups      | [`../hostnames.mdx`](../hostnames.mdx)           |
+| Environment configuration          | [`configuration.mdx`](configuration.mdx)         |
+| Bash scripting                     | [`../languages/bash.mdx`](../languages/bash.mdx) |
+| Testing rules                      | [`../testing.mdx`](../testing.mdx)               |
+| CI entrypoints and required checks | [`../ci/ci.mdx`](../ci/ci.mdx)                   |
+| Pre-commit hook structure          | [`../ci/pre-commit.mdx`](../ci/pre-commit.mdx)   |
