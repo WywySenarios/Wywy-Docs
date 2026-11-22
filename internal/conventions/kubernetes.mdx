@@ -1,0 +1,21 @@
+---
+title: Kubernetes Conventions
+published: "2026-11-22T22:20:45"
+last_updated: "2026-11-22T22:20:45"
+---
+
+## Kubeconfig
+
+All kubeconfigs and files under kubeconfigs and must have file permissions fit under umask 077 or similar (i.e. x00).
+
+No script may replace an already existing kubeconfig folder or file.
+
+### Individual Clusters
+
+Individual repo kubeconfig must be located in `~/.kube/configs/<repo-name>`.
+
+There **must** be an entrypoint for kubectl that injects the `KUBECONFIG` environment variable.
+
+### Dev & Prod Clusters
+
+The dev and prod cluster kubeconfigs must be located in `~/.kube/config/`.
