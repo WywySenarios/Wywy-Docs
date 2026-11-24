@@ -1,6 +1,7 @@
 ---
 title: Documentation Conventions
 published: 2026-06-26T03:27:48+00:00
+last_updated: 2026-11-24T05:26:33+00:00
 ---
 
 ## Two documentation tiers
@@ -35,6 +36,28 @@ Contents include:
 - **Service definitions** (service inventory, repo locations)
 
 Documents in `internal/` may describe in-progress or aspirational states. They are not authoritative for how the system currently behaves.
+
+## Structure
+
+A convention document teaches the ideal approach. The reader should finish a section knowing what to do; prohibitions are a short checklist at the end, not the body.
+
+- **Ideal first.** Most of each section is prose describing the correct approach. A reader who stops after the first paragraph still knows the right way.
+- **Group by topic.** One section per topic, with related rules together. Do not create a section per rule; many thin sections full of unrelated rules read as random and are hard to navigate.
+- **Pitfalls are occasional.** Mention a pitfall only where the ideal is extremely easy to get wrong, as one sentence next to the rule it qualifies.
+- **Collect at the end.** Each topic ends with a `### Common mistakes` list holding those one-sentence pitfalls. The body stays positive, and the list is the checklist.
+
+```md
+## <Topic>
+
+<Prose: the ideal approach, most of the section.>
+
+<One sentence about the easiest way to get it wrong.>
+
+### Common mistakes
+
+- <The pitfall, one line.>
+- <The pitfall, one line.>
+```
 
 ## File naming
 
