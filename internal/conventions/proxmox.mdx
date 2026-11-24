@@ -1,0 +1,30 @@
+---
+title: Proxmox Conventions
+published: "2026-11-20T05:13:30"
+last_updated: "2026-11-20T05:13:30"
+---
+
+Control repo specific documentation.
+
+## VMID
+
+Every VM and template has a numeric VMID that encodes its IPv4 address.
+
+| Kind     | VMID form | Meaning                                               |
+| -------- | --------- | ----------------------------------------------------- |
+| VM       | `xxxnnn`  | `xxx` is the third address octet, `nnn` is the fourth |
+| Template | `1xxxnnn` | the VM VMID with a leading `1`                        |
+
+A template is the VMID of the VM it builds with a leading `1`. For example, template `1236001` builds VM `236001`.
+
+### IPv4 Addresses
+
+The address is `<subnet>.<xxx>.<nnn>` on the SDN subnet. On `172.16.0.0/16`, VMID `236001` is `172.16.236.1`.
+
+- `xxx` is `0`–`255`.
+- `nnn` is `1`–`254`.
+- Do not reuse a VMID for a different workload.
+
+### Environment scope
+
+Dev and prod are separate Proxmox clusters, so the same VMID and address may be used in both. The address is cluster-scoped. It need not be globally unique.
