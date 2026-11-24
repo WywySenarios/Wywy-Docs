@@ -1,7 +1,23 @@
 ---
 title: Naming Convention (snake_case)
 published: 2026-05-22T00:00:00
+last_updated: "2026-11-21T13:07:49"
 ---
+
+## Example and mock values
+
+Invented values carry the `ex-` or `ex_` prefix so a reader knows immediately that the value is not real.
+
+| Context              | Form                          | Example                       |
+| -------------------- | ----------------------------- | ----------------------------- |
+| Example secret       | `ex-<kind>`                   | `ex-password`                 |
+| Example identifier   | `ex_<kind>`                   | `ex_user`                     |
+| Example email        | `ex-user@example.com`         | `ex-user@example.com`         |
+| Example host         | `ex-host.example.com`         | `ex-host.example.com`         |
+| Example URL          | `https://ex-host.example.com` | `https://ex-host.example.com` |
+| Template placeholder | `{{NAME}}`                    | `{{DB_PASSWORD}}`             |
+
+Tip: Do not use `secret123`, `password123`, `changeme`, `xxxxx`, `foo`, `bar`, `baz`, `dummy`, `sample`, `fake`, or `mock` as value prefixes.
 
 ## API Naming Convention
 

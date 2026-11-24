@@ -116,7 +116,7 @@ sops --decrypt secrets/admin.txt.sops > secrets/admin.txt
   tmp="$(mktemp)"
   trap 'rm -f "$tmp"' EXIT
   printf '%s' "$secret" | sops --input-type raw --output-type raw --encrypt /dev/stdin > "$tmp"
-  mv "$tmp" secrets/foo.sops
+  mv "$tmp" secrets/ex-secret.sops
   ```
 
   `sops --encrypt /dev/stdin` works because `.sops.yaml` has a `/dev/stdin` rule (section 4). Never redirect `>` straight to the target file — the shell truncates it before sops runs, so a failed encryption would wipe your existing secret; write to a temp file and `mv` into place instead. (`printf` is a bash builtin, so the value stays inside the running shell and never becomes a new process's argv.) If a repo provides a helper for a specific secret (e.g. `scripts/proxmox/vm/db/set-db-password.sh`), use it — it applies the same stdin-only rule.

@@ -1,83 +1,170 @@
 ---
 published: "2026-09-17T19:49:01"
-last_updated: "2026-09-17T19:55:32"
+last_updated: "2026-11-24T01:29:36"
 ---
 
 > Cross-language rules for writing tests in Wywy repositories. Applies to every test file in every repo, regardless of language or runner: shell (`bats`), Python (`pytest`), Go (`testing`), C, and anything else.
+>
+> Every test is exactly one of three types: behavioural, schema, or performance.
 
-## Assert on structure, never on raw text
+## Test types
 
-**Tests MUST NOT use raw string matching as an assertion mechanism.**
+| Type        | Subject            | What it proves                                               |
+| ----------- | ------------------ | ------------------------------------------------------------ |
+| Behavioural | The code           | Controlled input produces the declared output or side effect |
+| Schema      | A declared schema  | A committed input matches it, and invalid input is rejected  |
+| Performance | Time and resources | Bounds under load                                            |
 
-Raw string matching is asserting on the presence, absence, or equality of unparsed substrings — or unanchored regex scans for a value — in command output or file contents, instead of parsing the content and asserting on its fields. Banned forms include:
+Every test must fit exactly one type. A test that fits none is an anti-pattern: delete, split, or convert it to the type it should have been.
 
-- **shell / bats:** `grep 'kind: Service'`, `grep -q 'name: postgres'`, `[[ "$output" == *"port: 5432"* ]]`
-- **Python / pytest:** `assert "kind: Service" in output`, `assert 'port: 5432' in response.text`
-- **Go:** `strings.Contains(out, "kind: Service")`
-- **C:** `strstr(buf, "kind: Service") != NULL`
-- **any language:** regex scanning for a value in unparsed output (`re.search(r'port: (\d+)', out)`) when the output has a parseable structure
+Note: there are some VERY VERY VERY rare exceptions externally, including chaos testing. As for the moment, no wywy repo shall contain one of these tests.
 
-Rationale:
+### Convention exceptions
 
-- **False positives:** a substring can appear anywhere — a comment, an unrelated resource, a different field with a similar name. The assertion passes for the wrong reason.
-- **False negatives:** formatting shifts (indentation, key order, quoting, line wrapping) break the match even though the contract is unchanged.
-- **No diagnostics:** a failed substring check reports "not found", not "the actual value was X".
-- **Asserting prose, not contracts:** structured output (YAML, JSON, XML, dotenv) has a defined shape; the test must assert on that shape.
+Every rule in this document is the default. An exception MUST be explicit in the test and in review.
 
-## Required: structural assertions
+- Mark the site with `CONVENTION EXCEPTION(<rule>): <reason>` in the language's comment syntax, inline or immediately above the assertion or helper.
+- Configuration presence is never eligible for an ad-hoc exception. Validate against the schema; if no schema exists, add one.
+- An unmarked exception is a defect. Reviewers and agents reject it.
+- Do not declare a blanket exception for a file or suite; each site is marked.
 
-Parse the output or file with the language's real parser for the format, then assert on typed fields with exact expected values. Never hand-roll substring logic on unparsed text when a parser exists.
+Not exceptions: a parser or serializer test is behavioural; schema validation is a schema test; a plaintext-leak guard is an assertion mechanic.
 
-| Format                                       | Required mechanism (per language)                                                              | Banned alternative                                                             |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| YAML                                         | shell: `yq`; Python: `yaml.safe_load`; Go: `gopkg.in/yaml.v3` / `sigs.k8s.io/yaml`; C: libyaml | `grep 'kind: Service'`; `"kind: Service" in out`; `strings.Contains`; `strstr` |
-| JSON                                         | shell: `jq`; Python: `json.loads`; Go: `encoding/json` into a struct; C: jansson / cJSON       | `grep '"port": 5432'`; `'"port": 5432' in text`                                |
-| XML                                          | Python: `xml.etree.ElementTree`; Go: `encoding/xml`; C: libxml2                                | substring match on the serialized document                                     |
-| line-oriented KEY=VALUE (dotenv, env output) | exact-key line extraction — see the exception below                                            | `grep 'KEY='`; `"KEY=value" in text`                                           |
-| tabular / CSV                                | the format's reader (Python `csv`, Go `encoding/csv`); assert on fields                        | `grep -c` on rows                                                              |
-| cluster resource counts                      | `kubectl get ... -o json` + `jq` (or the equivalent client API)                                | `kubectl get ... \| grep -c name`                                              |
+An exception must explain why the rule's rationale does not apply to this product.
 
-### The line-oriented exception
+## Behavioural tests
 
-Exact-key extraction from a line-oriented KEY=VALUE format is sanctioned: the format is line-oriented, the key anchor is exact, and the result is the bare value — field extraction, not raw string matching. Per language:
+A behavioural test tests runtime behaviour by giving code controlled input and asserting the declared output or side effect.
+Each test crosses should verify one interface (i.e. cross one boundary).
 
-- **shell:** `sed -n 's/^KEY=//p'`
-- **Python:** read lines, split each on the first `=`, compare the key, take the value
-- **Go:** `strings.Cut(line, "=")` and compare the key
-- **C:** `strncmp` the key prefix on the line, then take the rest
+A behavioural test should define the expected input and outcome as literal constants (e.g. `INPUT_TOKEN = "ex-token"`, `EXPECTED_RESPONSE = "ex-token-ok"`).
+They must not be computed at test-time/run-time.
+Mocks and injected seams supply every external value: config, files, database, environment, network, clock, randomness, and paths.
 
-This applies to dotenv files and to any output that is a list of exact KEY=VALUE lines. For formats that are not line-oriented (YAML, JSON, XML), there is no exception — parse them.
+Assert on the code's output, not its source.
+Compare scalars directly.
+Parse structured output with the format's real parser and assert typed fields; a fixture is data, not an oracle, and a mock's configured return value is not the subject.
+Compare fields, not whole generated documents, unless exact bytes are the product.
 
-## Rules
+In the case the code gives structured output, you might need to use parsing libraries. Some common examples include:
 
-1. **No substring or unanchored-regex assertions on unparsed YAML, JSON, XML, or manifest output.** Parse it and assert on fields.
-2. **No `grep`/regex scanning for a VALUE in program output.** For structured output, parse it. For genuinely unstructured prose, assert on the exact line with anchored patterns (`^...$`) — never a bare substring.
-3. **No raw string equality on entire generated documents.** Compare parsed structures or asserted fields, not the whole text (formatting noise).
-4. **Code-content checks** (asserting "this file contains X") are a last resort and MUST be anchored, value-precise extractions on non-comment lines — never a bare substring search for a value that could appear in a comment or a different context. Prefer a runtime behavior test over source-text inspection whenever the behavior is executable.
-5. **Plaintext-leak guards** (e.g., "the encrypted file must not contain the plaintext value") are the same rule inverted: anchor to the exact full value line, scope to non-comment lines, and treat them as security guards, not value assertions.
-6. **Meaningful diagnostics:** every assertion failure message MUST show the actual observed value or state — not just "expected X not found". When parsing, show the parsed field's actual value.
-7. **Comment lines are not content:** when asserting on file contents, strip comments before extraction, and state that you did.
-8. **No excuses when a parser exists.** If the format has a parser in the language, text scanning is a defect. Only when no parser exists may you anchor the match to the field's exact position and value.
+| Format    | Use                                                              | Never                  |
+| --------- | ---------------------------------------------------------------- | ---------------------- |
+| YAML      | `yq`, `yaml.safe_load`, `gopkg.in/yaml.v3`, libyaml              | `grep 'kind: Service'` |
+| JSON      | `jq`, `json.loads`, `encoding/json` into a struct, jansson       | `grep '"port": 5432'`  |
+| XML       | `xml.etree.ElementTree`, `encoding/xml`, libxml2                 | substring match        |
+| KEY=VALUE | exact-key extraction (`sed -n 's/^KEY=//p'`, split on first `=`) | `grep 'KEY='`          |
+| CSV       | the format's reader; assert fields                               | `grep -c` on rows      |
 
-## Per-language notes
+For line-oriented KEY=VALUE, exact-key extraction is field extraction, not raw string matching. If the format has a parser, scanning it is a defect. Strip comments before reading file content. Source-text checks are a last resort; a plaintext-leak guard is a security check, not a value assertion.
 
-- **Shell / bats:** parse YAML with `yq` and JSON with `jq`; use `run` + `$status` / `$output` / `$stderr`; the dotenv form is `sed -n 's/^KEY=//p'`.
-- **Python / pytest:** `yaml.safe_load`, `json.loads`, `xml.etree.ElementTree`; assert on dict/list fields with `==`; never `"..." in response.text` for a field value.
-- **Go:** unmarshal into structs (`encoding/json`, `gopkg.in/yaml.v3`) and compare fields; table-driven tests are preferred; never `strings.Contains` on raw output for a field value.
-- **C:** use the format's library (jansson, cJSON, libyaml, libxml2); assert on parsed members; never `strstr` for a field value.
-- **Other languages:** same rule — use the ecosystem's real parser for the format.
+Values and fixtures are synthetic and named per [`naming.mdx`](naming.mdx#example-and-mock-values) (`ex-token`, `ex-user@example.com`).
+A behavioural test that reads real data to assert on it is data exfiltration, not a test.
+
+Tests should be reproducible. That means we shouldn't copy the ambient environment into a subprocess or exfiltrate secrets or runtime information.
+
+Behavioural tests do not test repository transitions. They do not test configuration, either.
+
+### Common mistakes
+
+- Asserting on unparsed output: `grep`, `strings.Contains`, `assert "x" in output`.
+- Asserting containment in parsed data: `assert "key" in parsed`.
+- Computing the expected value or calling production code as the oracle.
+- Reading a real file, production path, or ambient environment in a behavioural test.
+- Testing a migration, active or completed.
+- Asserting a constant or key exists in a configuration file.
+- Testing a script or a test runner.
+- Mixing in schema validation or performance timing.
+
+## Schema tests
+
+A schema test proves that a committed configuration conforms to a declared schema.
+Every committed configuration file (env, YAML/JSON, service config) MUST have a schema and MUST be validated against it in a configuration schema test suite.
+
+External libraries are recommended.
+If the repository's language lacks one, include validation code from another language and a schema validation suite.
+For example, if the repository is written in C, it would be a good idea to set up a Python environment to run schema validation with Pydantic.
+
+An example of a good test that verifies that configuration follows the schema:
+
+```python
+jsonschema.validate(instance=data, schema=schema)
+with pytest.raises(jsonschema.ValidationError):
+    jsonschema.validate(instance={}, schema=schema)
+```
+
+An example of a bad test that overreaches to becoming the schema:
+
+```python
+EX_VALUE = "ex-value"
+my_config = yaml.safe_load(config_path.read_text())
+assert my_config["ex-key"] == EX_VALUE
+assert "ex-key2" in my_config
+```
+
+### Schema Definitions
+
+Schemas must be defined in files under folders dedicated to schema definitions. For example,
+
+- `schemas/ex.schema.yaml`
+- `schemas/ex.ts`
+
+Schemas must be constant (i.e. be optimizable by the compiler if applicable).
+Schemas may be defined with Zod, JSONschema, etc.
+
+### Avoiding data exfiltration
+
+Schema tests must operate on real data (committed configuration) in a bounded way to avoid data exfiltration.
+
+Schema tests may never modify configuration.
+No configuration may originate from or be populated by testing code or harnesses.
+
+Schema tests must assert that configuration conforms to a schema.
+Schema tests never define, restate, or modify any part or whole schema.
+
+Schema tests must not persist anything to the filesystem.
+
+#### Handling encrypted values
+
+Schema tests may never decrypt any value of any sort.
+When a schema test must operate on encrypted values, we give it our best try but realize that our capability to test is limited.
+Usually this means that the schema should be dumbed down so that it can apply to encrypted values (e.g. key `XXX` must have regex `ENC[yyy]`).
+
+### Common mistakes
+
+- Asserting a value is present (e.g. `data["mykey"] == MYKEY_VALUE`) instead of validating the schema.
+- Restating the schema (e.g. allowed keys, types, or configured values) in the test or in comments.
+- Copying a committed value into the test file, a fixture, a log, or an artifact.
+- Using example values instead of the committed configuration.
+- Decrypting a value or requiring a decryption key.
+- Grepping the config file.
+- Restricting configuration values beyond the schema definition.
+- Asserting behaviour the configuration enables (that is a behavioural test).
+
+## Performance tests
+
+No performance-testing conventions exist yet.
+The first repository to add performance tests MUST establish them here: what is measured, the threshold, the fixture, the environment, and how flakiness is handled.
+Until then, do not add timing or resource assertions to behavioural or schema tests.
+
+### Common mistakes
+
+- A timing or resource assertion inside a behavioural or schema test.
+- A performance test committed before the conventions exist.
 
 ## Enforcement
 
-- Reviewers and agents MUST reject test changes that introduce raw string matching where a structural assertion is possible — in any language.
-- Implementation plans MUST NOT specify raw string matching as a test mechanism in any language. A plan that does is defective and must be revised before implementation.
-- This ban applies retroactively to existing tests in every repo: converting raw string matching to structural assertions is a required cleanup, not optional polish.
+Reviewers and agents must reject any test that fits none of the three types, violates these rules, or carries an unmarked exception.
+Implementation plans must NOT specify these anti-patterns. Existing violations must be cleaned up. They must not be grandfathered.
 
 ## Related conventions
 
-| Convention              | File                                           |
-| ----------------------- | ---------------------------------------------- |
-| CI and test entrypoints | [`ci/ci.mdx`](ci/ci.mdx)                       |
-| Bash scripting          | [`languages/bash.mdx`](languages/bash.mdx)     |
-| Python conventions      | [`languages/python.mdx`](languages/python.mdx) |
-| Go conventions          | [`languages/go.mdx`](languages/go.mdx)         |
+| Convention                | File                                                           |
+| ------------------------- | -------------------------------------------------------------- |
+| CI and test entrypoints   | [`ci/ci.mdx`](ci/ci.mdx)                                       |
+| Bash scripting            | [`languages/bash.mdx`](languages/bash.mdx)                     |
+| Python conventions        | [`languages/python.mdx`](languages/python.mdx)                 |
+| Go conventions            | [`languages/go.mdx`](languages/go.mdx)                         |
+| Configuration and secrets | [`tech-stack/configuration.mdx`](tech-stack/configuration.mdx) |
+| Example and mock values   | [`naming.mdx`](naming.mdx#example-and-mock-values)             |
+| Hostnames and IPs         | [`hostnames.mdx`](hostnames.mdx)                               |

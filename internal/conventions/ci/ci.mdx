@@ -111,7 +111,7 @@ Expected config path: `config/ci/config.yml` (relative to `REPO_ROOT`).
 
 In CI, the runner downloads and stages config before invoking a suite script. Locally, developers run `scripts/install/ci.sh` or equivalent provisioning steps.
 
-`config/ci/**` is a **committed fixture with dummy credentials only**. It exists so the suite boots without external secrets. Real credentials are never committed, and a suite that needs a real secret either provisions it through the CI credential mechanism or fails with a clear message.
+`config/ci/**` is a **committed fixture with example credentials only**, named per [`../naming.mdx`](../naming.mdx#example-and-mock-values) (`ex-token`, `ex-password`). It exists so the suite boots without external secrets. Real credentials are never committed, and a suite that needs a real secret either provisions it through the CI credential mechanism or fails with a clear message.
 
 ## Service lifecycle
 

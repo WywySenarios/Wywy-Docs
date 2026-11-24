@@ -96,20 +96,20 @@ Any command that takes the secret as an argument or env prefix:
 
 ```bash
 # LEAKS: secret is an echo argument (history + process table)
-echo 'hunter2' | sops --encrypt /dev/stdin
+echo 'ex-secret' | sops --encrypt /dev/stdin
 
 # LEAKS: secret is in the remote command's argv (local history + remote process table)
-ssh host "sudo -u postgres psql -c \"ALTER USER postgres PASSWORD 'hunter2';\""
+ssh host "sudo -u postgres psql -c \"ALTER USER postgres PASSWORD 'ex-secret';\""
 
 # LEAKS: secret as a flag argument
-curl -u alice:hunter2 https://example.com/api
+curl -u ex-user:ex-secret https://ex-host.example.com/api # betterleaks:allow
 
 # LEAKS: env prefix is recorded in history and readable via /proc/<pid>/environ
-API_KEY=hunter2 ./deploy.sh
+API_KEY=ex-secret ./deploy.sh
 
 # LEAKS: heredoc content typed at an interactive prompt is recorded in history
 ssh host "cat > secret.txt" <<EOF
-hunter2
+ex-secret
 EOF
 ```
 
